@@ -1,0 +1,15 @@
+{
+	"fact_table":"bugs",
+	"include": [
+		"attachments"
+
+	],
+	"limit": ["user"],
+	"database":{
+		"host":"localhost",
+		"port": 3306,
+		"schema":"bugzilla",
+		"$ref":"~/private.json#bugzilla",
+		"debug":true
+	}
+}
