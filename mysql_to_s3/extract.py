@@ -150,15 +150,20 @@ class Extract(object):
         output_columns = DictList()
         joins = DictList()
         all_nested_paths = [["."]]
+        done_relations = []
 
-        def follow_paths(position, relations_path, path, nested_path):
+        def follow_paths(position, path, nested_path):
             Log.note("Trace {{path}}", path=path)
+
+            if position.name in self.settings.exclude:
+                return
 
             # REFERENCE TABLES
             for g, c in jx.groupby(jx.filter(relations, {"eq": {"table.name": position.name, "table.schema": position.schema}}), "constraint.name"):
                 c = wrap(list(c))
-                if g.constraint.name in relations_path:
+                if g.constraint.name in done_relations:
                     continue
+                done_relations.append(g.constraint.name)
 
                 index = len(joins)
                 joins.append({
@@ -175,22 +180,25 @@ class Extract(object):
                             "table_alias": "t"+unicode(index),
                             "column_alias": "c"+unicode(c_index),
                             "column": col,
-                            "path": relations_path,
+                            "path": path,
                             "nested_path": nested_path
                         })
 
                 todo.append(Dict(
                     position=c[0].referenced.table,
-                    relations_path=relations_path+[g.constraint.name],
                     path=join_field(split_field(path) + ["/".join(c.column.name)]),
                     nested_path=nested_path
                 ))
 
+            if position.name in self.settings.reference_tables:
+                return
+
             # CHILDREN
             for g, c in jx.groupby(jx.filter(relations, {"eq": {"referenced.table.name": position.name, "referenced.table.schema": position.schema}}), "constraint.name"):
                 c = wrap(list(c))
-                if g.constraint.name in relations_path:
+                if g.constraint.name in done_relations:
                     continue
+                done_relations.append(g.constraint.name)
 
                 new_path = join_field(split_field(path) + ["/".join(c.table.name)])
                 new_nested_path = [new_path] + nested_path
@@ -222,7 +230,6 @@ class Extract(object):
 
                 todo.append(Dict(
                     position=c[0].table,
-                    relations_path=relations_path+[g.constraint.name],
                     path=new_path,
                     nested_path=new_nested_path
                 ))
@@ -250,13 +257,12 @@ class Extract(object):
 
         todo.append(Dict(
             position=position,
-            relations_path=[],
             path=path,
             nested_path=nested_path
         ))
 
         while todo:
-            item = todo.pop()
+            item = todo.pop(0)
             follow_paths(**item)
 
         # GENERATE SQL
