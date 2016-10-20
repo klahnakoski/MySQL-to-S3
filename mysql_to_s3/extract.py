@@ -367,7 +367,7 @@ class Extract(object):
                     sql_joins.append(
                         "\nLEFT JOIN " + full_name + " AS " + rel.table.alias +
                         "\nON " + " AND ".join(
-                            rel.table.alias + "." + self.db.quote_column(const_col.column.name) + "=" + rel.referenced.table.alias + "." + self.db.quote_column(const_col.column.name)
+                            rel.table.alias + "." + self.db.quote_column(const_col.column.name) + "=" + rel.referenced.table.alias + "." + self.db.quote_column(const_col.referenced.column.name)
                             for const_col in curr_join.join_columns
                         )
                     )
@@ -384,7 +384,9 @@ class Extract(object):
             # ONLY SELECT WHAT WE NEED, NULL THE REST
             selects = []
             not_null_column_seen = False
-            for c in output_columns:
+            for ci, c in enumerate(output_columns):
+                if c.column_alias[1:]!=unicode(ci):
+                    Log.error("expecting consistency")
                 if c.nested_path[0] == nested_path[0]:
                     s = c.table_alias+"."+c.column.column.name+" as "+c.column_alias
                     if s==None:
@@ -393,22 +395,35 @@ class Extract(object):
                     not_null_column_seen = True
                 elif startswith_field(nested_path[0], c.path):
                     # PARENT ID REFERENCES
-                    if c.is_id:
-                        selects.append(c.alias)
+                    if c.column.is_id:
+                        s = c.table_alias+"."+c.column.column.name+" as "+c.column_alias
+                        selects.append(s)
                         not_null_column_seen = True
                     else:
-                        selects.append("NULL")
+                        selects.append("NULL as "+c.column_alias)
                 else:
-                    selects.append("NULL")
+                    selects.append("NULL as "+c.column_alias)
 
             if not_null_column_seen:
-                sql.append("SELECT " + ",\n".join(selects) + "".join(sql_joins))
+                sql.append("SELECT\n\t" + ",\n\t".join(selects) + "".join(sql_joins))
 
-        return "\nUNION ALL\n".join(sql)
+        return Dict(
+            sql="\nUNION ALL\n".join(sql),
+            columns=output_columns
+        )
 
 
     def extract(self):
+
+
         # DETERMINE WHICH RECORDS TO PULL
+        meta = self.make_sql()
+
+
+        #SORT
+
+        #MAKE PULL AND PUSH FUNCTIONS
+
 
         # PULL DATA IN BLOCKS
 
