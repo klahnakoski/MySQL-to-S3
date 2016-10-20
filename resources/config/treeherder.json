@@ -1,0 +1,30 @@
+{
+	"fact_table": "job",
+	"add_relations":[
+		"treeherder.job_note.job_id -> mozilla_inbound.job.id",
+		"treeherder.bug_job_map.job_id -> mozilla_inbound.job.id",
+		"mozilla_inbound.job.build_platform_id -> treeherder.build_platform.id",
+		"mozilla_inbound.job.machine_id -> treeherder.machine.id",
+		"mozilla_inbound.job.option_collection_hash -> treeherder.option_collection.option_collection_hash",
+		"mozilla_inbound.job.job_type_id -> treeherder.job_type.id",
+		"mozilla_inbound.job.product_id -> treeherder.product.id",
+		"mozilla_inbound.job.failure_classification_id -> treeherder.failure_classification.id"
+	],
+	"include": [
+	],
+	"exclude": [
+		"runnable_job"
+	],
+	"reference_only": [
+		"auth_user.email",
+		""
+	],
+	"database": {
+		"host": "192.168.33.10",
+		"port": 3306,
+		"schema": "mozilla_inbound",
+		"username": "root",
+		"password": "",
+		"debug": true
+	}
+}

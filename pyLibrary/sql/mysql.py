@@ -587,7 +587,9 @@ class MySQL(object):
             Log.error("problem quoting SQL", e)
 
     def quote_column(self, column_name, table=None):
-        if isinstance(column_name, basestring):
+        if column_name==None:
+            Log.error("missing column_name")
+        elif isinstance(column_name, basestring):
             if table:
                 column_name = table + "." + column_name
             return SQL("`" + column_name.replace(".", "`.`") + "`")    # MY SQL QUOTE OF COLUMN NAMES
