@@ -3,14 +3,17 @@
 	"include": [
 		"attachments"
 	],
+	"show_ids": false,
 	"exclude": ["bugs_activity"],
-	"reference_tables": ["profiles", "product", "tracking_flags", "groups"],
+	"where":{"eq":{"bug_id":471427}},
+	"reference_tables": ["profiles", "product", "tracking_flags", "groups", "flagtypes"],
 	"reference_only": [
 		"profiles.login_name",
 		"groups.name",
 		"products.name",
 		"components.name",
-		"tracking_flags.name"
+		"tracking_flags.name",
+		"flagtypes.name"
 	],
 
 	"database":{

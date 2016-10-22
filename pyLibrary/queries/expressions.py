@@ -246,6 +246,8 @@ class Variable(Expression):
             # MAGIC VARIABLES
             agg = path[0]
             path = path[1:]
+            if len(path)==0:
+                return agg
         elif path[0] == "rows":
             if len(path) == 1:
                 return "rows"
@@ -325,8 +327,10 @@ class RowsOp(Expression):
             self.var = Literal("literal", self.var.var)
 
     def to_python(self, not_null=False, boolean=False):
+        code = self.offset.to_python()
+        agg = "rows[rownum+" + code + "]"
+
         path = split_field(self.var.to_python(not_null=True))
-        agg = "rows[rownum+" + unicode(self.offset) + "]"
         if not path:
             return agg
 
@@ -348,6 +352,31 @@ class RowsOp(Expression):
 
     def missing(self):
         return MissingOp("missing", self)
+
+
+class GetOp(Expression):
+    has_simple_form = True
+
+    def __init__(self, op, term):
+        Expression.__init__(self, op, term)
+        self.var, self.offset = term
+
+    def to_python(self, not_null=False, boolean=False):
+        obj = self.var.to_python()
+        code = self.offset.to_python()
+        return obj + "[" + code + "]"
+
+    def to_dict(self):
+        if isinstance(self.var, Literal) and isinstance(self.offset, Literal):
+            return {"get": {self.var.json, convert.json2value(self.offset.json)}}
+        else:
+            return {"get": [self.var.to_dict(), self.offset.to_dict()]}
+
+    def vars(self):
+        return self.var.vars() | self.offset.vars()
+
+    def map(self, map_):
+        return BinaryOp("get", [self.var.map(map_), self.offset.map(map_)])
 
 
 class ScriptOp(Expression):
@@ -2392,6 +2421,7 @@ operators = {
     "exists": ExistsOp,
     "exp": BinaryOp,
     "floor": FloorOp,
+    "get": GetOp,
     "gt": InequalityOp,
     "gte": InequalityOp,
     "in": InOp,

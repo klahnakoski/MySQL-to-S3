@@ -14,13 +14,16 @@ from __future__ import unicode_literals
 
 from copy import deepcopy, copy
 
-from pyLibrary import strings
+from pyLibrary import strings, convert
 from pyLibrary.debugs import constants, startup
 from pyLibrary.debugs.logs import Log
-from pyLibrary.dot import Dict, wrap, join_field, set_default, startswith_field, Null, split_field, DictList
+from pyLibrary.dot import Dict, wrap, join_field, set_default, startswith_field, Null, split_field, DictList, coalesce, literal_field
+from pyLibrary.env.files import File
 from pyLibrary.maths.randoms import Random
 from pyLibrary.meta import use_settings
 from pyLibrary.queries import jx
+from pyLibrary.queries.expressions import jx_expression
+from pyLibrary.queries.meta import Column
 from pyLibrary.queries.unique_index import UniqueIndex
 from pyLibrary.sql.mysql import MySQL
 
@@ -30,6 +33,8 @@ class Extract(object):
     @use_settings
     def __init__(self, settings=None):
         self.settings=settings
+        self.settings.exclude = set(self.settings.exclude)
+        self.settings.show_ids = coalesce(self.settings.show_ids, True)
         self.db = MySQL(**settings.database)
 
 
@@ -143,7 +148,8 @@ class Extract(object):
                 column_name,
                 table_schema,
                 table_name,
-                ordinal_position
+                ordinal_position,
+                data_type
             FROM
                 information_schema.columns
         """, param=self.settings.database)
@@ -156,29 +162,32 @@ class Extract(object):
             if c.table_name in reference_tables:
                 if c.table_name + "." + c.column_name in self.settings.reference_only:
                     reference = True
-                    exclude = False
+                    include = True
                 elif c.column_name in tables[(c.table_name, c.table_schema)].id:
-                    exclude = self.settings.show_ids == False
+                    include = self.settings.show_ids
                     reference = False
                 else:
-                    exclude = True
+                    include = False
                     reference = False
             elif c.column_name in tables[(c.table_name, c.table_schema)].id:
-                exclude = self.settings.show_ids == False
+                include = self.settings.show_ids
                 reference = False
             else:
-                exclude = False
+                include = True
                 reference = False
 
             rel = {
-                "column": {"name": c.column_name},
+                "column": {
+                    "name": c.column_name,
+                    "type": c.data_type
+                },
                 "table": {
                     "name": c.table_name,
                     "schema": c.table_schema
                 },
                 "ordinal_position": c.ordinal_position,
                 "is_id": c.column_name in tables[(c.table_name, c.table_schema)].id,
-                "exclude": exclude,
+                "include": include,
                 "reference": reference
             }
             columns.add(rel)
@@ -222,35 +231,58 @@ class Extract(object):
 
                 for col in columns:
                     if col.table.name == constraint_columns[0].referenced.table.name and col.table.schema == constraint_columns[0].referenced.table.schema:
-                        # col_path = join_field(split_field(path)+[col.column.name])
-                        if col.reference or col.is_id:
-                            c_index = len(output_columns)
-                            output_columns.append({
-                                "table_alias": alias,
-                                "column_alias": "c"+unicode(c_index),
-                                "column": col,
-                                "path": new_path,
-                                "nested_path": nested_path
-                            })
-                        elif not col.exclude:
-                            c_index = len(output_columns)
-                            output_columns.append({
-                                "table_alias": alias,
-                                "column_alias": "c"+unicode(c_index),
-                                "column": col,
-                                "path": new_path,
-                                "nested_path": nested_path
-                            })
+                        # HANDLE THE COMMON *id SUFFIX
+                        name = []
+                        for a, b in zip(constraint_columns.column.name, constraint_columns.referenced.table.name):
+                            if a.startswith(b):
+                                name.append(b)
+                            elif a.endswith("_id"):
+                                name.append(a[:-3])
+                            else:
+                                name.append(a)
 
-                # HANDLE THE COMMON *id SUFFIX
-                name = []
-                for a, b in zip(constraint_columns.column.name, constraint_columns.referenced.table.name):
-                    if a.startswith(b):
-                        name.append(b)
-                    elif a.endswith("_id"):
-                        name.append(a[:-3])
-                    else:
-                        name.append(a)
+                        col_full_name = join_field(split_field(path)[len(split_field(nested_path[0])):]+[literal_field(col.column.name)])
+
+                        if col.column.name == constraint_columns[0].column.name:
+                            c_index = len(output_columns)
+                            output_columns.append({
+                                "table_alias": alias,
+                                "column_alias": "c"+unicode(c_index),
+                                "column": col,
+                                "path": new_path,
+                                "nested_path": nested_path,
+                                "put": col_full_name if self.settings.show_ids else None
+                            })
+                        elif col.is_id:
+                            c_index = len(output_columns)
+                            output_columns.append({
+                                "table_alias": alias,
+                                "column_alias": "c"+unicode(c_index),
+                                "column": col,
+                                "path": new_path,
+                                "nested_path": nested_path,
+                                "put": col_full_name if self.settings.show_ids else None
+                            })
+                        elif col.reference:
+                            c_index = len(output_columns)
+                            output_columns.append({
+                                "table_alias": alias,
+                                "column_alias": "c"+unicode(c_index),
+                                "column": col,
+                                "path": new_path,
+                                "nested_path": nested_path,
+                                "put": col_full_name
+                            })
+                        elif col.include:
+                            c_index = len(output_columns)
+                            output_columns.append({
+                                "table_alias": alias,
+                                "column_alias": "c"+unicode(c_index),
+                                "column": col,
+                                "path": new_path,
+                                "nested_path": nested_path,
+                                "put": col_full_name
+                            })
 
                 if position.name in reference_tables:
                     continue
@@ -271,7 +303,11 @@ class Extract(object):
                     continue
                 done_relations.append(g.constraint.name)
 
-                new_path = join_field(split_field(path) + ["/".join(constraint_columns.table.name)])
+                many_table = set(constraint_columns.table.name)
+                if not (many_table - self.settings.exclude):
+                    continue
+
+                new_path = join_field(split_field(path) + ["/".join(many_table)])
                 new_nested_path = [new_path] + nested_path
                 all_nested_paths.append(new_nested_path)
 
@@ -293,24 +329,44 @@ class Extract(object):
 
                 for col in columns:
                     if col.table.name == constraint_columns[0].table.name and col.table.schema == constraint_columns[0].table.schema:
-                        c_index = len(output_columns)
-                        output_columns.append({
-                            "table_alias": alias,
-                            "column_alias": "c"+unicode(c_index),
-                            "column": col,
-                            "path": new_path,
-                            "nested_path": new_nested_path
-                        })
+                        col_full_name = join_field(split_field(new_path)[len(split_field(new_nested_path[0])):]+[literal_field(col.column.name)])
+
+                        if col.column.name == constraint_columns[0].column.name:
+                            c_index = len(output_columns)
+                            output_columns.append({
+                                "table_alias": alias,
+                                "column_alias": "c"+unicode(c_index),
+                                "column": col,
+                                "path": new_path,
+                                "nested_path": new_nested_path,
+                                "put": col_full_name if self.settings.show_ids else None
+                            })
+                        elif col.is_id:
+                            c_index = len(output_columns)
+                            output_columns.append({
+                                "table_alias": alias,
+                                "column_alias": "c"+unicode(c_index),
+                                "column": col,
+                                "path": new_path,
+                                "nested_path": new_nested_path,
+                                "put": col_full_name if self.settings.show_ids else None
+                            })
+                        else:
+                            c_index = len(output_columns)
+                            output_columns.append({
+                                "table_alias": alias,
+                                "column_alias": "c"+unicode(c_index),
+                                "column": col,
+                                "path": new_path,
+                                "nested_path": new_nested_path,
+                                "put": col_full_name
+                            })
 
                 todo.append(Dict(
                     position=constraint_columns[0].table,
                     path=new_path,
                     nested_path=new_nested_path
                 ))
-
-
-
-
 
         position = Dict(
             name=self.settings.fact_table,
@@ -324,6 +380,7 @@ class Extract(object):
             "join_columns": [{"referenced": {"table": position}}],
             "nested_path": nested_path
         }]
+        schema = {}
 
         # SELECT COLUMNS
         for rel in columns:
@@ -334,8 +391,23 @@ class Extract(object):
                     "column_alias": "c"+unicode(c_index),
                     "column": rel,
                     "path": path,
-                    "nested_path": nested_path
+                    "nested_path": nested_path,
+                    "put": literal_field(rel.column.name)
                 })
+                schema[literal_field(rel.column.name)]=Column(
+                    name=literal_field(rel.column.name),
+                    table=position.name,
+                    es_column="t0",
+                    es_index="c"+unicode(c_index),
+                    type=rel.column.type,
+                    nested_path=nested_path,
+                    relative=False
+                )
+
+
+        ex = jx_expression(coalesce(self.settings.where, True))
+        self.settings.where = ex.to_sql()
+
 
         todo.append(Dict(
             position=position,
@@ -365,7 +437,7 @@ class Extract(object):
                 elif curr_join.children:
                     full_name = self.db.quote_column(rel.table.schema)+"."+self.db.quote_column(rel.table.name)
                     sql_joins.append(
-                        "\nLEFT JOIN " + full_name + " AS " + rel.table.alias +
+                        "\nJOIN " + full_name + " AS " + rel.table.alias +
                         "\nON " + " AND ".join(
                             rel.table.alias + "." + self.db.quote_column(const_col.column.name) + "=" + rel.referenced.table.alias + "." + self.db.quote_column(const_col.referenced.column.name)
                             for const_col in curr_join.join_columns
@@ -407,26 +479,58 @@ class Extract(object):
             if not_null_column_seen:
                 sql.append("SELECT\n\t" + ",\n\t".join(selects) + "".join(sql_joins))
 
+            sql.append("WHERE "+self.settings.where)
+
         return Dict(
             sql="\nUNION ALL\n".join(sql),
             columns=output_columns
         )
 
+    def extract(self, meta):
+        columns = meta.columns
 
-    def extract(self):
+        # ORDERING
+        sort = []
+        ordering = []
+        for ci, c in enumerate(columns):
+            if c.column.is_id:
+                sort.append(c.column_alias + " IS NULL")
+                sort.append(c.column_alias)
+                ordering.append(ci)
 
+        id_accessor = jx.jx_expression_to_function({"tuple": [{"get": {"row": i}} for i in ordering]})
+        # SORT
+        sql = "SELECT * FROM ("+meta.sql+") as a ORDER BY "+",".join(sort)
 
-        # DETERMINE WHICH RECORDS TO PULL
-        meta = self.make_sql()
+        cursor = self.db.db.cursor()
+        cursor.execute(sql)
 
+        output = DictList()
 
-        #SORT
+        for row in cursor:
+            nested_path = []
+            curr_record = Dict()
+            for ci, c in enumerate(columns):
+                value = row[ci]
+                if value != None:
+                    if len(nested_path) < len(c.nested_path):
+                        nested_path = c.nested_path
+                        curr_record = Dict()
+                    if c.put != None:
+                        curr_record[c.put] = value
 
-        #MAKE PULL AND PUSH FUNCTIONS
+            children = output
+            for n in jx.reverse(nested_path)[1::]:
+                parent = children.last()
+                children = parent[n]
+                if children == None:
+                    children = parent[n] = []
 
+            children.append(curr_record)
 
-        # PULL DATA IN BLOCKS
+        Log.note("{{data}}", data=output)
 
+        cursor.close()
         # PUSH TO S3
         pass
 
@@ -438,8 +542,14 @@ def main():
         constants.set(settings.constants)
         Log.start(settings.debug)
 
-        sql = Extract(settings).make_sql()
-        Log.note("{{sql}}", sql=sql)
+        e = Extract(settings)
+        meta = e.make_sql()
+        Log.note("{{sql}}", sql=meta.sql)
+        File("temp.json").write(convert.value2json(meta, pretty=True, sort_keys=True))
+        meta = convert.json2value(File("temp.json").read())
+        e.extract(meta)
+
+        # Log.note("{{sql}}", sql=sql)
 
     except Exception, e:
         Log.error("Problem with data extraction", e)
