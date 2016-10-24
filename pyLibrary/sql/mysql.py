@@ -734,3 +734,28 @@ def json_encode(value):
     """
     return unicode(json_encoder.encode(jsons.scrub(value)))
 
+
+mysql_type_to_json_type = {
+    "bigint": "number",
+    "blob": "string",
+    "char": "string",
+    "datetime": "number",
+    "decimal": "number",
+    "double": "number",
+    "enum": "number",
+    "float": "number",
+    "int": "number",
+    "longblob": "string",
+    "longtext": "string",
+    "mediumblob": "string",
+    "mediumint": "number",
+    "mediumtext": "string",
+    "set": "array",
+    "smallint": "number",
+    "text": "string",
+    "time": "number",
+    "timestamp": "number",
+    "tinyint": "number",
+    "tinytext": "number",
+    "varchar": "string"
+}

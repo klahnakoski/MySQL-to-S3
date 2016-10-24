@@ -25,7 +25,7 @@ from pyLibrary.queries import jx
 from pyLibrary.queries.expressions import jx_expression
 from pyLibrary.queries.meta import Column
 from pyLibrary.queries.unique_index import UniqueIndex
-from pyLibrary.sql.mysql import MySQL
+from pyLibrary.sql.mysql import MySQL, mysql_type_to_json_type
 
 
 class Extract(object):
@@ -394,20 +394,18 @@ class Extract(object):
                     "nested_path": nested_path,
                     "put": literal_field(rel.column.name)
                 })
-                schema[literal_field(rel.column.name)]=Column(
-                    name=literal_field(rel.column.name),
-                    table=position.name,
-                    es_column="t0",
-                    es_index="c"+unicode(c_index),
-                    type=rel.column.type,
+                schema[literal_field(rel.column.name)] = {Column(
+                    name="c"+unicode(c_index),
+                    table=position.alias,
+                    es_column=self.db.quote_column(rel.column.name),
+                    es_index=position.alias,
+                    type=mysql_type_to_json_type[rel.column.type],
                     nested_path=nested_path,
                     relative=False
-                )
-
+                )}
 
         ex = jx_expression(coalesce(self.settings.where, True))
-        self.settings.where = ex.to_sql()
-
+        self.settings.where = ex.to_sql(schema)[0].sql.b
 
         todo.append(Dict(
             position=position,
@@ -479,11 +477,10 @@ class Extract(object):
             if not_null_column_seen:
                 sql.append("SELECT\n\t" + ",\n\t".join(selects) + "".join(sql_joins))
 
-            sql.append("WHERE "+self.settings.where)
-
         return Dict(
-            sql="\nUNION ALL\n".join(sql),
-            columns=output_columns
+            sql=sql,
+            columns=output_columns,
+            where=self.settings.where
         )
 
     def extract(self, meta):
@@ -498,9 +495,8 @@ class Extract(object):
                 sort.append(c.column_alias)
                 ordering.append(ci)
 
-        id_accessor = jx.jx_expression_to_function({"tuple": [{"get": {"row": i}} for i in ordering]})
-        # SORT
-        sql = "SELECT * FROM ("+meta.sql+") as a ORDER BY "+",".join(sort)
+        sql = "\nUNION ALL\n".join([s+"\nWHERE "+meta.where for s in meta.sql])
+        sql = "SELECT * FROM ("+sql+") as a\nORDER BY "+",".join(sort)
 
         cursor = self.db.db.cursor()
         cursor.execute(sql)

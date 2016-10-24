@@ -270,8 +270,8 @@ class Variable(Expression):
         acc = Dict()
         nested_path = ["."]
         for c in cols:
-            nested_path = wrap_nested_path(c.nested_path)
-            acc[json_type_to_sql_type[c.type]] = c.es_index + "." + convert.string2quote(c.es_column)
+            nested_path = c.nested_path
+            acc[json_type_to_sql_type[c.type]] = join_field(split_field(c.es_index) + [c.es_column])
 
         return wrap([{"name": ".", "sql": acc, "nested_path": nested_path}])
 
