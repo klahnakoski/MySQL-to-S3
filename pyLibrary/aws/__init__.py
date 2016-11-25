@@ -7,21 +7,22 @@
 #
 # Author: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
-from __future__ import unicode_literals
-from __future__ import division
 from __future__ import absolute_import
+from __future__ import division
+from __future__ import unicode_literals
 
+import requests
 from boto import sqs
 from boto import utils as boto_utils
 from boto.sqs.message import Message
-import requests
 
 from pyLibrary import convert
-from pyLibrary.debugs.exceptions import Except
-from pyLibrary.debugs.logs import Log
+from pyLibrary.debugs.exceptions import Except, suppress_exception
+from pyLibrary.debugs.logs import Log, machine_metadata
 from pyLibrary.dot import wrap, unwrap, coalesce
 from pyLibrary.maths import Math
-from pyLibrary.meta import use_settings, cache
+from pyLibrary.meta import use_settings
+from pyLibrary.thread.signal import Signal
 from pyLibrary.thread.threads import Thread
 from pyLibrary.times.durations import SECOND, Duration
 
@@ -41,7 +42,7 @@ class Queue(object):
         self.pending = []
 
         if settings.region not in [r.name for r in sqs.regions()]:
-            Log.error("Can not find region {{region}} in {{regions}}",  region= settings.region,  regions= [r.name for r in sqs.regions()])
+            Log.error("Can not find region {{region}} in {{regions}}", region=settings.region, regions=[r.name for r in sqs.regions()])
 
         conn = sqs.connect_to_region(
             region_name=unwrap(settings.region),
@@ -50,7 +51,7 @@ class Queue(object):
         )
         self.queue = conn.get_queue(settings.name)
         if self.queue == None:
-            Log.error("Can not find queue with name {{queue}} in region {{region}}",  queue= settings.name,  region= settings.region)
+            Log.error("Can not find queue with name {{queue}} in region {{region}}", queue=settings.name, region=settings.region)
 
     def __enter__(self):
         return self
@@ -77,6 +78,9 @@ class Queue(object):
             self.add(m)
 
     def pop(self, wait=SECOND, till=None):
+        if till is not None and not isinstance(till, Signal):
+            Log.error("Expecting a signal")
+
         m = self.queue.read(wait_time_seconds=Math.floor(wait.seconds))
         if not m:
             return None
@@ -89,6 +93,9 @@ class Queue(object):
         """
         RETURN TUPLE (message, payload) CALLER IS RESPONSIBLE FOR CALLING message.delete() WHEN DONE
         """
+        if till is not None and not isinstance(till, Signal):
+            Log.error("Expecting a signal")
+
         message = self.queue.read(wait_time_seconds=Math.floor(wait.seconds))
         if not message:
             return None
@@ -105,8 +112,7 @@ class Queue(object):
 
     def rollback(self):
         if self.pending:
-            pending = self.pending
-            self.pending = []
+            pending, self.pending = self.pending, []
 
             for p in pending:
                 m = Message()
@@ -132,14 +138,22 @@ def capture_termination_signal(please_stop):
         while not please_stop:
             try:
                 response = requests.get("http://169.254.169.254/latest/meta-data/spot/termination-time")
-                if response.status_code != 400:
+                if response.status_code not in [400, 404]:
+                    Log.warning("Shutdown AWS Spot Node {{name}} {{type}}", name=machine_metadata.name, type=machine_metadata.aws_instance_type)
                     please_stop.go()
                     return
             except Exception, e:
+                e = Except.wrap(e)
+                if "Failed to establish a new connection: [Errno 10060]" in e:
+                    Log.warning("AWS Spot Detection has shutdown, probably not a spot node, (http://169.254.169.254 is unreachable)")
+                    return
+                else:
+                    Log.warning("AWS shutdown detection has problems", cause=e)
                 Thread.sleep(seconds=61, please_stop=please_stop)
             Thread.sleep(seconds=11, please_stop=please_stop)
 
-    Thread.run("listen for termination", worker)
+    Thread.run("listen for termination", worker, please_stop=please_stop)
+
 
 def get_instance_metadata(timeout=None):
     if not isinstance(timeout, (int, float)):
@@ -164,6 +178,14 @@ def aws_retry(func):
     return output
 
 
+# GET FROM AWS, IF WE CAN
+def _get_metadata_from_from_aws(please_stop):
+    with suppress_exception:
+        ec2 = get_instance_metadata()
+        if ec2:
+            machine_metadata.aws_instance_type = ec2.instance_type
+            machine_metadata.name = ec2.instance_id
 
+Thread.run("get aws machine metadata", _get_metadata_from_from_aws)
 
 from . import s3

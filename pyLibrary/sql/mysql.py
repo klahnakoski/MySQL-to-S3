@@ -95,7 +95,8 @@ class MySQL(object):
                 passwd=coalesce(self.settings.password, self.settings.passwd),
                 db=coalesce(self.settings.schema, self.settings.db),
                 charset=u"utf8",
-                use_unicode=True
+                use_unicode=True,
+                ssl=coalesce(self.settings.ssl, None)
             )
         except Exception, e:
             if self.settings.host.find("://") == -1:
