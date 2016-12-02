@@ -32,7 +32,7 @@ class Extract(object):
     def __init__(self, settings=None):
         self.settings=settings
         self.settings.exclude = set(self.settings.exclude)
-        self.settings.show_ids = coalesce(self.settings.show_ids, True)
+        self.settings.show_foreign_keys = coalesce(self.settings.show_foreign_keys, True)
         processes = None
         try:
             self.db = MySQL(**settings.database)
@@ -146,12 +146,12 @@ class Extract(object):
                 "id": [b.column_name for b in best_index]
             })
 
-        prime_table = tables[self.settings.fact_table, self.settings.database.schema]
+        fact_table = tables[self.settings.fact_table, self.settings.database.schema]
         ids_table = {
             "alias": "t0",
             "name": "__ids__",
-            "schema": prime_table.schema,
-            "id": prime_table.id
+            "schema": fact_table.schema,
+            "id": fact_table.id
         }
         relations.extend(
             wrap({
@@ -159,14 +159,14 @@ class Extract(object):
                 "table": ids_table,
                 "column": {"name": c},
                 "referenced": {
-                    "table": prime_table,
+                    "table": fact_table,
                     "column": {
                         "name": c
                     }
                 },
                 "ordinal_position": i
             })
-            for i, c in enumerate(prime_table.id)
+            for i, c in enumerate(fact_table.id)
         )
         tables.add(ids_table)
 
@@ -199,16 +199,16 @@ class Extract(object):
                     include = True
                     reference = True
                 elif c.column_name in tables[(c.table_name, c.table_schema)].id:
-                    include = self.settings.show_ids
+                    include = self.settings.show_foreign_keys
                     reference = False
                 else:
                     include = False
                     reference = False
             elif c.column_name in tables[(c.table_name, c.table_schema)].id:
-                include = self.settings.show_ids
+                include = self.settings.show_foreign_keys
                 reference = False
             elif (c.column_name, c.table_name, c.table_schema) in related_column_table_schema_triples:
-                include = self.settings.show_ids
+                include = self.settings.show_foreign_keys
                 reference = False
             else:
                 include = True
@@ -291,7 +291,8 @@ class Extract(object):
                         col_pointer_name = relative_field(referenced_table_path, nested_path[0])
                         col_full_name = concat_field(col_pointer_name, literal_field(col.column.name))
 
-                        if col.column.name == constraint_columns[0].column.name:
+                        if col.is_id and col.table.name == fact_table.name and col.table.schema == fact_table.schema:
+                            # ALWYAS SHOW THE ID O THE FACT
                             c_index = len(output_columns)
                             output_columns.append({
                                 "table_alias": alias,
@@ -299,7 +300,17 @@ class Extract(object):
                                 "column": col,
                                 "path": referenced_table_path,
                                 "nested_path": nested_path,
-                                "put": col_full_name if self.settings.show_ids else None
+                                "put": col_full_name
+                            })
+                        elif col.column.name == constraint_columns[0].column.name:
+                            c_index = len(output_columns)
+                            output_columns.append({
+                                "table_alias": alias,
+                                "column_alias": "c"+unicode(c_index),
+                                "column": col,
+                                "path": referenced_table_path,
+                                "nested_path": nested_path,
+                                "put": col_full_name if self.settings.show_foreign_keys else None
                             })
                         elif col.is_id:
                             c_index = len(output_columns)
@@ -309,7 +320,7 @@ class Extract(object):
                                 "column": col,
                                 "path": referenced_table_path,
                                 "nested_path": nested_path,
-                                "put": col_full_name if self.settings.show_ids else None
+                                "put": col_full_name if self.settings.show_foreign_keys else None
                             })
                         elif col.reference:
                             c_index = len(output_columns)
@@ -319,7 +330,7 @@ class Extract(object):
                                 "column": col,
                                 "path": referenced_table_path,
                                 "nested_path": nested_path,
-                                "put": col_pointer_name if not self.settings.show_ids else col_full_name  # REFERENCE FIELDS CAN REPLACE THE WHOLE OBJECT BEING REFERENCED
+                                "put": col_pointer_name if not self.settings.show_foreign_keys else col_full_name  # REFERENCE FIELDS CAN REPLACE THE WHOLE OBJECT BEING REFERENCED
                             })
                         elif col.include:
                             c_index = len(output_columns)
@@ -385,7 +396,7 @@ class Extract(object):
                                 "column": col,
                                 "path": referenced_table_path,
                                 "nested_path": new_nested_path,
-                                "put": col_full_name if self.settings.show_ids else None
+                                "put": col_full_name if self.settings.show_foreign_keys else None
                             })
                         elif col.is_id:
                             c_index = len(output_columns)
@@ -395,7 +406,7 @@ class Extract(object):
                                 "column": col,
                                 "path": referenced_table_path,
                                 "nested_path": new_nested_path,
-                                "put": col_full_name if self.settings.show_ids else None
+                                "put": col_full_name if self.settings.show_foreign_keys else None
                             })
                         else:
                             c_index = len(output_columns)
@@ -530,9 +541,9 @@ class Extract(object):
         data = list(cursor)
         cursor.close()
 
-        File("cursor.json").write(convert.value2json(data, pretty=True))
+        File("output/cursor.json").write(convert.value2json(data, pretty=True))
 
-        # data = convert.json2value(File("cursor.json").read())
+        # data = convert.json2value(File("output/cursor.json").read())
 
         output = []
         null_values=set(self.settings.null_values) | {None}
@@ -562,7 +573,7 @@ class Extract(object):
 
             children.append(curr_record)
 
-        File("result.json").write(convert.value2json(output, pretty=True))
+        File("output/result.json").write(convert.value2json(output, pretty=True))
         # Log.note("{{data}}", data=output)
 
         # PUSH TO S3
@@ -578,8 +589,8 @@ def main():
         e = Extract(settings)
         meta = e.make_sql()
         # Log.note("{{sql}}", sql=meta.sql)
-        File("meta.json").write(convert.value2json(meta, pretty=True, sort_keys=True))
-        meta = convert.json2value(File("meta.json").read())
+        File("output/meta.json").write(convert.value2json(meta, pretty=True, sort_keys=True))
+        meta = convert.json2value(File("output/meta.json").read())
         e.extract(meta)
 
         # Log.note("{{sql}}", sql=sql)

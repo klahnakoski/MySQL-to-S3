@@ -21,7 +21,7 @@ The denormalization process involves walking all foreign key paths, breadth firs
 
 Each fact table is uses a configuration file to control the denormalization process. Here are the properties  
 
-* `show_ids` - *default true* - Include the foreign key ids. This is useful if you require those ids for later synchronization. If you are only interested in the relationships, then they can be left out, and the JSON will be simpler for not having to hold those ids.
+* `show_foreign_keys` - *default true* - Include the foreign key ids. This is useful if you require those ids for later synchronization. If you are only interested in the relationships, then they can be left out, and the JSON will be simpler for not having to hold those ids.
 * `ids` - An important piece of SQL that will produce the set of keys to extract from the fact table.  This allows you to specify any query that can leverage indexes to increase performance.  You can use the name of the `prime_field`, which is the largest value of the previous successful extract.
 * `prime_feld` - Field to track between extracts; it should be a timestamp, or constantly increasing value, that can help find all changes since the last run.  This extract program will record the maximum value seen to the file system so subsequent runs can continue where it left off. 
 * `null_value` - Some databases use a variety of values that indicate *no value*. The database `NULL` is always considered missing, and these values are mapped to `NULL` too.
@@ -38,7 +38,7 @@ The extract for the Treeherder database is interested in the `job` facts. For th
 	{
 		"fact_table": "job",
 		"prime_field": "last_modified",
-		"show_ids": false,
+		"show_foreign_keys": false,
 		"null_values": ["-", "unknown", ""],
 		"ids": "select id from (select last_modified, id from job order by id desc limit 1000000) a order by id desc limit 10",
 		"add_relations":[

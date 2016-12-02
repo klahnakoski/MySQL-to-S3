@@ -3,7 +3,7 @@
 	"include": [
 		"attachments"
 	],
-	"show_ids": false,
+	"show_foreign_keys": false,
 	"exclude": ["bugs_activity"],
 	"where":{"eq":{"bug_id":471427}},
 	"reference_tables": ["profiles", "product", "tracking_flags", "groups", "flagtypes"],

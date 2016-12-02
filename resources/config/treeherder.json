@@ -1,6 +1,6 @@
 {
 	"fact_table": "job",
-	"show_ids": false,
+	"show_foreign_keys": false,
 	"null_values": ["-", "unknown", ""],
 	"ids": "select id from (select last_modified, id from job order by id desc limit 1000000) a order by id desc limit 10",
 	"add_relations":[

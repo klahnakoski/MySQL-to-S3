@@ -1,4 +1,4 @@
-/cursor.json
-/temp.json
-/cursor - Copy.json
+.idea
+*.iml
 *.pyc
+/output
