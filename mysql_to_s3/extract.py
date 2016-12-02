@@ -17,15 +17,13 @@ from copy import deepcopy, copy
 from pyLibrary import strings, convert
 from pyLibrary.debugs import constants, startup
 from pyLibrary.debugs.logs import Log
-from pyLibrary.dot import Dict, wrap, join_field, set_default, startswith_field, Null, split_field, DictList, coalesce, literal_field
+from pyLibrary.dot import Dict, wrap, join_field, set_default, startswith_field, Null, split_field, DictList, coalesce, literal_field, unwrap, relative_field, concat_field
 from pyLibrary.env.files import File
 from pyLibrary.maths.randoms import Random
 from pyLibrary.meta import use_settings
 from pyLibrary.queries import jx
-from pyLibrary.queries.expressions import jx_expression
-from pyLibrary.queries.meta import Column
 from pyLibrary.queries.unique_index import UniqueIndex
-from pyLibrary.sql.mysql import MySQL, mysql_type_to_json_type
+from pyLibrary.sql.mysql import MySQL
 
 
 class Extract(object):
@@ -35,8 +33,14 @@ class Extract(object):
         self.settings=settings
         self.settings.exclude = set(self.settings.exclude)
         self.settings.show_ids = coalesce(self.settings.show_ids, True)
-        self.db = MySQL(**settings.database)
-
+        processes = None
+        try:
+            self.db = MySQL(**settings.database)
+            processes = jx.filter(self.db.query("show processlist"), {"and": [{"neq": {"Command": "Sleep"}}, {"neq": {"Info": "show processlist"}}]})
+        except Exception, e:
+            Log.warning("no database", cause=e)
+        if processes:
+            Log.error("Processes are running\n{{list|json}}", list=processes)
 
     def make_sql(self):
         # GET ALL RELATIONS
@@ -142,6 +146,30 @@ class Extract(object):
                 "id": [b.column_name for b in best_index]
             })
 
+        prime_table = tables[self.settings.fact_table, self.settings.database.schema]
+        ids_table = {
+            "alias": "t0",
+            "name": "__ids__",
+            "schema": prime_table.schema,
+            "id": prime_table.id
+        }
+        relations.extend(
+            wrap({
+                "constraint": {"name":"__link_ids_to_fact_table__"},
+                "table": ids_table,
+                "column": {"name": c},
+                "referenced": {
+                    "table": prime_table,
+                    "column": {
+                        "name": c
+                    }
+                },
+                "ordinal_position": i
+            })
+            for i, c in enumerate(prime_table.id)
+        )
+        tables.add(ids_table)
+
         # GET ALL COLUMNS
         raw_columns = self.db.query("""
             SELECT
@@ -154,15 +182,22 @@ class Extract(object):
                 information_schema.columns
         """, param=self.settings.database)
 
-        # TODO: MARKUP COLUMNS AS UID, REFERENCED, OR EXCLUDED
-        reference_tables = [r.split(".")[0] for r in self.settings.reference_only]
+        reference_only_tables = [r.split(".")[0] for r in self.settings.reference_only]
+        related_column_table_schema_triples = {
+            t
+            for r in relations
+            for t in [
+                (r.column.name, r.table.name, r.table.schema),
+                (r.referenced.column.name, r.referenced.table.name, r.referenced.table.schema)
+            ]
+        }
 
         columns = UniqueIndex(["column.name", "table.name", "table.schema"])
         for c in raw_columns:
-            if c.table_name in reference_tables:
+            if c.table_name in reference_only_tables:
                 if c.table_name + "." + c.column_name in self.settings.reference_only:
-                    reference = True
                     include = True
+                    reference = True
                 elif c.column_name in tables[(c.table_name, c.table_schema)].id:
                     include = self.settings.show_ids
                     reference = False
@@ -170,6 +205,9 @@ class Extract(object):
                     include = False
                     reference = False
             elif c.column_name in tables[(c.table_name, c.table_schema)].id:
+                include = self.settings.show_ids
+                reference = False
+            elif (c.column_name, c.table_name, c.table_schema) in related_column_table_schema_triples:
                 include = self.settings.show_ids
                 reference = False
             else:
@@ -188,7 +226,7 @@ class Extract(object):
                 "ordinal_position": c.ordinal_position,
                 "is_id": c.column_name in tables[(c.table_name, c.table_schema)].id,
                 "include": include,
-                "reference": reference
+                "reference": reference   # TRUE IF THIS COLUMN REPRESENTS THE ROW
             }
             columns.add(rel)
 
@@ -200,19 +238,28 @@ class Extract(object):
         done_relations = []
 
         def follow_paths(position, path, nested_path):
-            Log.note("Trace {{path}}", path=path)
-
             if position.name in self.settings.exclude:
+                return
+            Log.note("Trace {{path}}", path=path)
+            if position.name!="__ids__":
+                self.db.query("SELECT * FROM "+self.db.quote_column(position.name, position.schema)+" LIMIT 1")
+
+            if position.name in reference_only_tables:
                 return
 
             curr_join_list = copy(nested_path_to_join[nested_path[0]])
 
             # REFERENCE TABLES
-            for g, constraint_columns in jx.groupby(jx.filter(relations, {"eq": {"table.name": position.name, "table.schema": position.schema}}), "constraint.name"):
-                constraint_columns = wrap(deepcopy(list(constraint_columns)))
-                if g.constraint.name in done_relations:
+            referenced_tables = list(jx.groupby(jx.filter(relations, {"eq": {"table.name": position.name, "table.schema": position.schema}}), "constraint.name"))
+            for g, constraint_columns in referenced_tables:
+                g = unwrap(g)
+                constraint_columns = deepcopy(constraint_columns)
+                if g["constraint.name"] in done_relations:
                     continue
-                done_relations.append(g.constraint.name)
+                if any(c for c in constraint_columns if c.referenced.table.name in self.settings.exclude):
+                    continue
+
+                done_relations.append(g["constraint.name"])
 
                 many_to_one_joins = nested_path_to_join[nested_path[0]]
                 index = len(many_to_one_joins)
@@ -227,7 +274,7 @@ class Extract(object):
                     "nested_path": nested_path
                 })
 
-                new_path = join_field(split_field(path) + ["/".join(constraint_columns.referenced.table.name)])
+                referenced_table_path = join_field(split_field(path) + ["/".join(constraint_columns.referenced.table.name)])
 
                 for col in columns:
                     if col.table.name == constraint_columns[0].referenced.table.name and col.table.schema == constraint_columns[0].referenced.table.schema:
@@ -241,7 +288,8 @@ class Extract(object):
                             else:
                                 name.append(a)
 
-                        col_full_name = join_field(split_field(path)[len(split_field(nested_path[0])):]+[literal_field(col.column.name)])
+                        col_pointer_name = relative_field(referenced_table_path, nested_path[0])
+                        col_full_name = concat_field(col_pointer_name, literal_field(col.column.name))
 
                         if col.column.name == constraint_columns[0].column.name:
                             c_index = len(output_columns)
@@ -249,7 +297,7 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": new_path,
+                                "path": referenced_table_path,
                                 "nested_path": nested_path,
                                 "put": col_full_name if self.settings.show_ids else None
                             })
@@ -259,7 +307,7 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": new_path,
+                                "path": referenced_table_path,
                                 "nested_path": nested_path,
                                 "put": col_full_name if self.settings.show_ids else None
                             })
@@ -269,9 +317,9 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": new_path,
+                                "path": referenced_table_path,
                                 "nested_path": nested_path,
-                                "put": col_full_name
+                                "put": col_pointer_name if not self.settings.show_ids else col_full_name  # REFERENCE FIELDS CAN REPLACE THE WHOLE OBJECT BEING REFERENCED
                             })
                         elif col.include:
                             c_index = len(output_columns)
@@ -279,42 +327,40 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": new_path,
+                                "path": referenced_table_path,
                                 "nested_path": nested_path,
                                 "put": col_full_name
                             })
 
-                if position.name in reference_tables:
+                if position.name in reference_only_tables:
                     continue
 
                 todo.append(Dict(
                     position=constraint_columns[0].referenced.table.copy(),
-                    path=new_path,
+                    path=referenced_table_path,
                     nested_path=nested_path
                 ))
 
-            if position.name in reference_tables:
-                return
-
             # CHILDREN
             for g, constraint_columns in jx.groupby(jx.filter(relations, {"eq": {"referenced.table.name": position.name, "referenced.table.schema": position.schema}}), "constraint.name"):
-                constraint_columns = wrap(deepcopy(list(constraint_columns)))
-                if g.constraint.name in done_relations:
+                g = unwrap(g)
+                constraint_columns = deepcopy(constraint_columns)
+                if g["constraint.name"] in done_relations:
                     continue
-                done_relations.append(g.constraint.name)
+                done_relations.append(g["constraint.name"])
 
                 many_table = set(constraint_columns.table.name)
                 if not (many_table - self.settings.exclude):
                     continue
 
-                new_path = join_field(split_field(path) + ["/".join(many_table)])
-                new_nested_path = [new_path] + nested_path
+                referenced_table_path = join_field(split_field(path) + ["/".join(many_table)])
+                new_nested_path = [referenced_table_path] + nested_path
                 all_nested_paths.append(new_nested_path)
 
                 # if new_path not in self.settings.include:
                 #     Log.note("Exclude nested path {{path}}", path=new_path)
                 #     continue
-                one_to_many_joins = nested_path_to_join[new_path] = copy(curr_join_list)
+                one_to_many_joins = nested_path_to_join[referenced_table_path] = copy(curr_join_list)
                 index = len(one_to_many_joins)
                 alias = "t"+unicode(index)
                 for c in constraint_columns:
@@ -329,7 +375,7 @@ class Extract(object):
 
                 for col in columns:
                     if col.table.name == constraint_columns[0].table.name and col.table.schema == constraint_columns[0].table.schema:
-                        col_full_name = join_field(split_field(new_path)[len(split_field(new_nested_path[0])):]+[literal_field(col.column.name)])
+                        col_full_name = join_field(split_field(referenced_table_path)[len(split_field(new_nested_path[0])):]+[literal_field(col.column.name)])
 
                         if col.column.name == constraint_columns[0].column.name:
                             c_index = len(output_columns)
@@ -337,7 +383,7 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": new_path,
+                                "path": referenced_table_path,
                                 "nested_path": new_nested_path,
                                 "put": col_full_name if self.settings.show_ids else None
                             })
@@ -347,7 +393,7 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": new_path,
+                                "path": referenced_table_path,
                                 "nested_path": new_nested_path,
                                 "put": col_full_name if self.settings.show_ids else None
                             })
@@ -357,58 +403,27 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": new_path,
+                                "path": referenced_table_path,
                                 "nested_path": new_nested_path,
                                 "put": col_full_name
                             })
 
                 todo.append(Dict(
                     position=constraint_columns[0].table,
-                    path=new_path,
+                    path=referenced_table_path,
                     nested_path=new_nested_path
                 ))
 
-        position = Dict(
-            name=self.settings.fact_table,
-            schema=self.settings.database.schema,
-            alias="t0"
-        )
         path = "."
         nested_path = [path]
-        nested_path_to_join["."]=[{
+        nested_path_to_join["."] = [{
             "path": path,
-            "join_columns": [{"referenced": {"table": position}}],
+            "join_columns": [{"referenced": {"table": ids_table}}],
             "nested_path": nested_path
         }]
-        schema = {}
-
-        # SELECT COLUMNS
-        for rel in columns:
-            if rel.table.name == position.name and rel.table.schema == position.schema:
-                c_index = len(output_columns)
-                output_columns.append({
-                    "table_alias": "t0",
-                    "column_alias": "c"+unicode(c_index),
-                    "column": rel,
-                    "path": path,
-                    "nested_path": nested_path,
-                    "put": literal_field(rel.column.name)
-                })
-                schema[literal_field(rel.column.name)] = {Column(
-                    name="c"+unicode(c_index),
-                    table=position.alias,
-                    es_column=self.db.quote_column(rel.column.name),
-                    es_index=position.alias,
-                    type=mysql_type_to_json_type[rel.column.type],
-                    nested_path=nested_path,
-                    relative=False
-                )}
-
-        ex = jx_expression(coalesce(self.settings.where, True))
-        self.settings.where = ex.to_sql(schema)[0].sql.b
 
         todo.append(Dict(
-            position=position,
+            position=ids_table,
             path=path,
             nested_path=nested_path
         ))
@@ -416,6 +431,22 @@ class Extract(object):
         while todo:
             item = todo.pop(0)
             follow_paths(**item)
+
+        sql = self.compose_sql(all_nested_paths, nested_path_to_join, output_columns)
+
+        return Dict(
+            sql=sql,
+            columns=output_columns,
+            where=self.settings.where
+        )
+
+    def compose_sql(self, all_nested_paths, nested_path_to_join, output_columns):
+        """
+        :param all_nested_paths: list of tuples; each tuple is a path (from deep to shallow of all nested documents)
+        :param nested_path_to_join: dict from nested path to information required to build sql join
+        :param output_columns: ordered list of every output column
+        :return:
+        """
 
         # GENERATE SQL
         # HOW TO AVOID JOINING LOOKUP TABLES WHEN PROVIDING NESTED RECORDS?
@@ -430,10 +461,9 @@ class Extract(object):
                 curr_join = wrap(curr_join)
                 rel = curr_join.join_columns[0]
                 if i == 0:
-                    full_name = self.db.quote_column(rel.referenced.table.schema)+"."+self.db.quote_column(rel.referenced.table.name)
-                    sql_joins.append("\nFROM " + full_name + " AS " + rel.referenced.table.alias)
+                    sql_joins.append("\nFROM (" + self.settings.ids + ") AS " + rel.referenced.table.alias)
                 elif curr_join.children:
-                    full_name = self.db.quote_column(rel.table.schema)+"."+self.db.quote_column(rel.table.name)
+                    full_name = self.db.quote_column(rel.table.schema) + "." + self.db.quote_column(rel.table.name)
                     sql_joins.append(
                         "\nJOIN " + full_name + " AS " + rel.table.alias +
                         "\nON " + " AND ".join(
@@ -442,7 +472,7 @@ class Extract(object):
                         )
                     )
                 else:
-                    full_name = self.db.quote_column(rel.referenced.table.schema)+"."+self.db.quote_column(rel.referenced.table.name)
+                    full_name = self.db.quote_column(rel.referenced.table.name, rel.referenced.table.schema)
                     sql_joins.append(
                         "\nLEFT JOIN " + full_name + " AS " + rel.referenced.table.alias +
                         "\nON " + " AND ".join(
@@ -455,33 +485,28 @@ class Extract(object):
             selects = []
             not_null_column_seen = False
             for ci, c in enumerate(output_columns):
-                if c.column_alias[1:]!=unicode(ci):
+                if c.column_alias[1:] != unicode(ci):
                     Log.error("expecting consistency")
                 if c.nested_path[0] == nested_path[0]:
-                    s = c.table_alias+"."+c.column.column.name+" as "+c.column_alias
-                    if s==None:
+                    s = c.table_alias + "." + c.column.column.name + " as " + c.column_alias
+                    if s == None:
                         Log.error("bug")
                     selects.append(s)
                     not_null_column_seen = True
                 elif startswith_field(nested_path[0], c.path):
                     # PARENT ID REFERENCES
                     if c.column.is_id:
-                        s = c.table_alias+"."+c.column.column.name+" as "+c.column_alias
+                        s = c.table_alias + "." + c.column.column.name + " as " + c.column_alias
                         selects.append(s)
                         not_null_column_seen = True
                     else:
-                        selects.append("NULL as "+c.column_alias)
+                        selects.append("NULL as " + c.column_alias)
                 else:
-                    selects.append("NULL as "+c.column_alias)
+                    selects.append("NULL as " + c.column_alias)
 
             if not_null_column_seen:
                 sql.append("SELECT\n\t" + ",\n\t".join(selects) + "".join(sql_joins))
-
-        return Dict(
-            sql=sql,
-            columns=output_columns,
-            where=self.settings.where
-        )
+        return sql
 
     def extract(self, meta):
         columns = meta.columns
@@ -495,41 +520,53 @@ class Extract(object):
                 sort.append(c.column_alias)
                 ordering.append(ci)
 
-        sql = "\nUNION ALL\n".join([s+"\nWHERE "+meta.where for s in meta.sql])
+        sql = "\nUNION ALL\n".join(meta.sql)
         sql = "SELECT * FROM ("+sql+") as a\nORDER BY "+",".join(sort)
+
+        Log.note("{{sql}}", sql=sql)
 
         cursor = self.db.db.cursor()
         cursor.execute(sql)
+        data = list(cursor)
+        cursor.close()
 
-        output = DictList()
+        File("cursor.json").write(convert.value2json(data, pretty=True))
 
-        for row in cursor:
+        # data = convert.json2value(File("cursor.json").read())
+
+        output = []
+        null_values=set(self.settings.null_values) | {None}
+
+        for row in data:
             nested_path = []
-            curr_record = Dict()
+            curr_record = None
             for ci, c in enumerate(columns):
                 value = row[ci]
-                if value != None:
-                    if len(nested_path) < len(c.nested_path):
-                        nested_path = c.nested_path
-                        curr_record = Dict()
-                    if c.put != None:
+                if value in null_values:
+                    continue
+                if len(nested_path) < len(c.nested_path):
+                    nested_path = c.nested_path
+                    curr_record = Dict()
+                if c.put != None:
+                    try:
                         curr_record[c.put] = value
+                    except Exception, e:
+                        Log.warning("should not happen", cause=e)
 
             children = output
             for n in jx.reverse(nested_path)[1::]:
-                parent = children.last()
+                parent = children[-1]
                 children = parent[n]
                 if children == None:
                     children = parent[n] = []
 
             children.append(curr_record)
 
-        Log.note("{{data}}", data=output)
+        File("result.json").write(convert.value2json(output, pretty=True))
+        # Log.note("{{data}}", data=output)
 
-        cursor.close()
         # PUSH TO S3
         pass
-
 
 
 def main():
@@ -540,9 +577,9 @@ def main():
 
         e = Extract(settings)
         meta = e.make_sql()
-        Log.note("{{sql}}", sql=meta.sql)
-        File("temp.json").write(convert.value2json(meta, pretty=True, sort_keys=True))
-        meta = convert.json2value(File("temp.json").read())
+        # Log.note("{{sql}}", sql=meta.sql)
+        File("meta.json").write(convert.value2json(meta, pretty=True, sort_keys=True))
+        meta = convert.json2value(File("meta.json").read())
         e.extract(meta)
 
         # Log.note("{{sql}}", sql=sql)

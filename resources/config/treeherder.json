@@ -1,30 +1,45 @@
 {
 	"fact_table": "job",
+	"show_ids": false,
+	"null_values": ["-", "unknown", ""],
+	"ids": "select id from (select last_modified, id from job order by id desc limit 1000000) a order by id desc limit 10",
 	"add_relations":[
-		"treeherder.job_note.job_id -> mozilla_inbound.job.id",
-		"treeherder.bug_job_map.job_id -> mozilla_inbound.job.id",
-		"mozilla_inbound.job.build_platform_id -> treeherder.build_platform.id",
-		"mozilla_inbound.job.machine_id -> treeherder.machine.id",
-		"mozilla_inbound.job.option_collection_hash -> treeherder.option_collection.option_collection_hash",
-		"mozilla_inbound.job.job_type_id -> treeherder.job_type.id",
-		"mozilla_inbound.job.product_id -> treeherder.product.id",
-		"mozilla_inbound.job.failure_classification_id -> treeherder.failure_classification.id"
+		"treeherder.performance_datum.ds_job_id -> treeherder.job.project_specific_id",
+		"treeherder.performance_datum.repository_id -> treeherder.job.repository_id"
+
+
+//		"treeherder.job_note.job_id -> mozilla_inbound.job.id",
+//		"treeherder.bug_job_map.job_id -> mozilla_inbound.job.id",
+//		"mozilla_inbound.job.build_platform_id -> treeherder.build_platform.id",
+//		"mozilla_inbound.job.machine_id -> treeherder.machine.id",
+//		"mozilla_inbound.job.option_collection_hash -> treeherder.option_collection.option_collection_hash",
+//		"mozilla_inbound.job.job_type_id -> treeherder.job_type.id",
+//		"mozilla_inbound.job.product_id -> treeherder.product.id",
+//		"mozilla_inbound.job.failure_classification_id -> treeherder.failure_classification.id"
 	],
 	"include": [
 	],
 	"exclude": [
-		"runnable_job"
+		"runnable_job",
+		"auth_user",
+		"job_log",
+		"text_log_step",
+		"commit",
+		"performance_datum",
+		"performance_alert_summary"
 	],
 	"reference_only": [
-		"auth_user.email",
-		""
+		"user.email",
+		"repository.name",
+		"machine_platform.platform",
+		"failure_classification.name"
 	],
 	"database": {
-		"host": "192.168.33.10",
-		"port": 3306,
-		"schema": "mozilla_inbound",
-		"username": "root",
-		"password": "",
-		"debug": true
+		"schema": "treeherder",
+		"username": "activedata",
+		"$ref":"~/private.json#treeherder"
+	},
+	"debug":{
+		"trace":true
 	}
 }
