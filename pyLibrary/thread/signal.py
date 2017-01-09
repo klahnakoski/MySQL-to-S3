@@ -17,6 +17,9 @@ from __future__ import unicode_literals
 
 from thread import allocate_lock as _allocate_lock
 
+import sys
+from time import time
+
 _Log = None
 DEBUG = False
 DEBUG_SIGNAL = False
@@ -25,7 +28,7 @@ DEBUG_SIGNAL = False
 def _late_import():
     global _Log
 
-    from pyLibrary.debugs.logs import Log as _Log
+    from MoLogs import Log as _Log
 
     _ = _Log
 
@@ -35,8 +38,7 @@ class Signal(object):
     SINGLE-USE THREAD SAFE SIGNAL
 
     go() - ACTIVATE SIGNAL (DOES NOTHING IF SIGNAL IS ALREADY ACTIVATED)
-    wait_for_go() - PUT THREAD IN WAIT STATE UNTIL SIGNAL IS ACTIVATED
-    is_go() - TEST IF SIGNAL IS ACTIVATED, DO NOT WAIT (you can also check truthiness)
+    wait() - PUT THREAD IN WAIT STATE UNTIL SIGNAL IS ACTIVATED
     on_go() - METHOD FOR OTHER THREAD TO RUN WHEN ACTIVATING SIGNAL
     """
 
@@ -50,30 +52,33 @@ class Signal(object):
         self._name = name
         self.lock = _allocate_lock()
         self._go = False
-        self.job_queue = []
-        self.waiting_threads = []
+        self.job_queue = None
+        self.waiting_threads = None
 
     def __str__(self):
         return str(self._go)
 
     def __bool__(self):
-        with self.lock:
-            return self._go
+        return self._go
 
     def __nonzero__(self):
         with self.lock:
             return self._go
 
-    def wait_for_go(self):
+    def wait(self):
         """
         PUT THREAD IN WAIT STATE UNTIL SIGNAL IS ACTIVATED
         """
+
         with self.lock:
             if self._go:
                 return True
             stopper = _allocate_lock()
             stopper.acquire()
-            self.waiting_threads.append(stopper)
+            if not self.waiting_threads:
+                self.waiting_threads = [stopper]
+            else:
+                self.waiting_threads.append(stopper)
 
         if DEBUG:
             if not _Log:
@@ -101,28 +106,23 @@ class Signal(object):
             if self._go:
                 return
             self._go = True
-            jobs, self.job_queue = self.job_queue, []
-            threads, self.waiting_threads = self.waiting_threads, []
+            jobs, self.job_queue = self.job_queue, None
+            threads, self.waiting_threads = self.waiting_threads, None
 
-        for t in threads:
+        if threads:
             if DEBUG:
-                _Log.note("Release")
-            t.release()
+                _Log.note("Release {{num}} threads", num=len(threads))
+            for t in threads:
+                t.release()
 
-        for j in jobs:
-            try:
-                j()
-            except Exception, e:
-                if not _Log:
-                    _late_import()
-                _Log.warning("Trigger on Signal.go() failed!", cause=e)
-
-    def is_go(self):
-        """
-        TEST IF SIGNAL IS ACTIVATED, DO NOT WAIT
-        """
-        with self.lock:
-            return self._go
+        if jobs:
+            for j in jobs:
+                try:
+                    j()
+                except Exception, e:
+                    if not _Log:
+                        _late_import()
+                    _Log.warning("Trigger on Signal.go() failed!", cause=e)
 
     def on_go(self, target):
         """
@@ -145,7 +145,10 @@ class Signal(object):
                     if not _Log:
                         _late_import()
                     _Log.note("Adding target to signal {{name|quote}}", name=self.name)
-                self.job_queue.append(target)
+                if not self.job_queue:
+                    self.job_queue = [target]
+                else:
+                    self.job_queue.append(target)
 
     @property
     def name(self):
@@ -165,7 +168,7 @@ class Signal(object):
                 _late_import()
             _Log.error("Expecting OR with other signal")
 
-        output = Signal()
+        output = Signal(self.name + " | " + other.name)
         self.on_go(output.go)
         other.on_go(output.go)
         return output
