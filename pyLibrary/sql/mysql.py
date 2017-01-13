@@ -17,7 +17,7 @@ import subprocess
 from collections import Mapping
 from datetime import datetime
 
-from pymysql import connect, InterfaceError
+from pymysql import connect, InterfaceError, cursors
 
 from MoLogs import Log
 from MoLogs.exceptions import Except, suppress_exception
@@ -95,7 +95,8 @@ class MySQL(object):
                 db=coalesce(self.settings.schema, self.settings.db),
                 charset=u"utf8",
                 use_unicode=True,
-                ssl=coalesce(self.settings.ssl, None)
+                ssl=coalesce(self.settings.ssl, None),
+                cursorclass=cursors.SSCursor
             )
         except Exception, e:
             if self.settings.host.find("://") == -1:

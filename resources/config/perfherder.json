@@ -1,16 +1,26 @@
 {
-	"last": {
-		"file": "output/perfherder.json",
-		"default": {"id": 1}
+	"extract": {
+		"last": "output/perfherder_last_run.json",
+		"field": "id",
+		"default": 1,
+		"batch": 10000,
+		"ids": "select id from performance_datum where floor({{last.id}}/10000)*10000 <= id order by id limit 10000"
+	},
+	"destination": {
+		"bucket": "active-data-treeherder-perf",
+		"public": true,
+		"key_format": "a",
+		"$ref": "file://~/private.json#aws_credentials"
 	},
 	"fact_table": "performance_datum",
 	"show_foreign_keys": false,
 	"null_values": ["-", "unknown", ""],
-	"ids": "select id from performance_datum where id>={{last.id}} order by id desc limit 10",
 	"add_relations":[
-		"treeherder.performance_datum.ds_job_id -> treeherder.job.project_specific_id",
-		"treeherder.performance_datum.repository_id -> treeherder.job.repository_id",
-		"treeherder.job.option_collection_hash -> treeherder.option_collection.option_collection_hash"
+		"treeherder.performance_datum.ds_job_id -> treeherder.job.id",
+		"treeherder.performance_datum.job_id -> treeherder.job.id",
+		"treeherder.performance_datum.push_id -> treeherder.push.id",
+		"treeherder.performance_datum.repository_id -> treeherder.repository.id",
+		"treeherder.performance_datum.signature_id -> treeherder.performance_signature.id"
 	],
 	"include": [
 	],
@@ -18,9 +28,12 @@
 		"runnable_job",
 		"auth_user",
 		"job_log",
-		"text_log_step"
+		"text_log_step",
+		"performance_alert_summary"
 	],
 	"reference_only": [
+		"performance_framework.name",
+		"job.guid",
 		"user.email",
 		"repository.name",
 		"machine_platform.platform",

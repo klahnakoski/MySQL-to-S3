@@ -13,17 +13,26 @@ from __future__ import division
 from __future__ import unicode_literals
 
 from copy import deepcopy, copy
+from tempfile import NamedTemporaryFile
 
-from MoLogs import Log, strings, startup, constants
+from MoLogs import Log, strings, startup, constants, machine_metadata
+from MoLogs.strings import expand_template
 from pyDots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field
 from pyLibrary import convert
+from pyLibrary.aws import s3
 from pyLibrary.env.files import File
+from pyLibrary.env.git import get_git_revision
+from pyLibrary.maths import Math
 from pyLibrary.maths.randoms import Random
 from pyLibrary.meta import use_settings
 from pyLibrary.queries import jx
 from pyLibrary.queries.unique_index import UniqueIndex
 from pyLibrary.sql.mysql import MySQL
+from pyLibrary.times.dates import Date
+from pyLibrary.times.durations import DAY
+from pyLibrary.times.timer import Timer
 
+DEBUG = True
 
 class Extract(object):
 
@@ -38,12 +47,13 @@ class Extract(object):
             processes = jx.filter(self.db.query("show processlist"), {"and": [{"neq": {"Command": "Sleep"}}, {"neq": {"Info": "show processlist"}}]})
         except Exception, e:
             Log.warning("no database", cause=e)
-        if processes:
-            Log.error("Processes are running\n{{list|json}}", list=processes)
+        # if processes:
+        #     Log.error("Processes are running\n{{list|json}}", list=processes)
         try:
-            self.last = File(settings.last.file).read_json()
+            self.last = File(settings.extract.last).read_json()
         except Exception:
-            self.last = settings.last.default
+            self.last = wrap({settings.extract.field: settings.extract.default})
+        Log.note("Starting scan of {{table}} at {{id}}", table=self.settings.fact_table, id=self.last[self.settings.extract.field])
 
     def make_sql(self):
         # GET ALL RELATIONS
@@ -79,7 +89,7 @@ class Extract(object):
                     ordinal_position=1
                 ))
             except Exception, e:
-                Log.error("Could not parse {{line|quote}}", line=r)
+                Log.error("Could not parse {{line|quote}}", line=r, cause=e)
 
         relations = jx.select(raw_relations, [
             {"name": "constraint.name", "value": "constraint_name"},
@@ -238,9 +248,9 @@ class Extract(object):
         output_columns = FlatList()
         nested_path_to_join = {}
         all_nested_paths = [["."]]
-        done_relations = []
+        # done_relations = []
 
-        def follow_paths(position, path, nested_path):
+        def follow_paths(position, path, nested_path, done_relations):
             if position.name in self.settings.exclude:
                 return
             Log.note("Trace {{path}}", path=path)
@@ -252,7 +262,7 @@ class Extract(object):
 
             curr_join_list = copy(nested_path_to_join[nested_path[0]])
 
-            # REFERENCE TABLES
+            # INNER OBJECTS
             referenced_tables = list(jx.groupby(jx.filter(relations, {"eq": {"table.name": position.name, "table.schema": position.schema}}), "constraint.name"))
             for g, constraint_columns in referenced_tables:
                 g = unwrap(g)
@@ -262,7 +272,7 @@ class Extract(object):
                 if any(cc for cc in constraint_columns if cc.referenced.table.name in self.settings.exclude):
                     continue
 
-                done_relations.append(g["constraint.name"])
+                done_relations.add(g["constraint.name"])
 
                 many_to_one_joins = nested_path_to_join[nested_path[0]]
                 index = len(many_to_one_joins)
@@ -277,31 +287,31 @@ class Extract(object):
                     "nested_path": nested_path
                 })
 
-                referenced_table_path = join_field(split_field(path) + ["/".join(constraint_columns.referenced.table.name)])
+                # referenced_table_path = join_field(split_field(path) + ["/".join(constraint_columns.referenced.table.name)])
+                # HANDLE THE COMMON *id SUFFIX
+                name = []
+                for a, b in zip(constraint_columns.column.name, constraint_columns.referenced.table.name):
+                    if a.startswith(b):
+                        name.append(b)
+                    elif a.endswith("_id"):
+                        name.append(a[:-3])
+                    else:
+                        name.append(a)
+                referenced_column_path = join_field(split_field(path) + ["/".join(name)])
+                col_pointer_name = relative_field(referenced_column_path, nested_path[0])
 
                 for col in columns:
                     if col.table.name == constraint_columns[0].referenced.table.name and col.table.schema == constraint_columns[0].referenced.table.schema:
-                        # HANDLE THE COMMON *id SUFFIX
-                        name = []
-                        for a, b in zip(constraint_columns.column.name, constraint_columns.referenced.table.name):
-                            if a.startswith(b):
-                                name.append(b)
-                            elif a.endswith("_id"):
-                                name.append(a[:-3])
-                            else:
-                                name.append(a)
-
-                        col_pointer_name = relative_field(referenced_table_path, nested_path[0])
                         col_full_name = concat_field(col_pointer_name, literal_field(col.column.name))
 
                         if col.is_id and col.table.name == fact_table.name and col.table.schema == fact_table.schema:
-                            # ALWYAS SHOW THE ID O THE FACT
+                            # ALWAYS SHOW THE ID OF THE FACT
                             c_index = len(output_columns)
                             output_columns.append({
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": referenced_table_path,
+                                "path": referenced_column_path,
                                 "nested_path": nested_path,
                                 "put": col_full_name
                             })
@@ -311,7 +321,7 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": referenced_table_path,
+                                "path": referenced_column_path,
                                 "nested_path": nested_path,
                                 "put": col_full_name if self.settings.show_foreign_keys else None
                             })
@@ -321,7 +331,7 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": referenced_table_path,
+                                "path": referenced_column_path,
                                 "nested_path": nested_path,
                                 "put": col_full_name if self.settings.show_foreign_keys else None
                             })
@@ -331,7 +341,7 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": referenced_table_path,
+                                "path": referenced_column_path,
                                 "nested_path": nested_path,
                                 "put": col_pointer_name if not self.settings.show_foreign_keys else col_full_name  # REFERENCE FIELDS CAN REPLACE THE WHOLE OBJECT BEING REFERENCED
                             })
@@ -341,7 +351,7 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": referenced_table_path,
+                                "path": referenced_column_path,
                                 "nested_path": nested_path,
                                 "put": col_full_name
                             })
@@ -351,30 +361,31 @@ class Extract(object):
 
                 todo.append(Data(
                     position=constraint_columns[0].referenced.table.copy(),
-                    path=referenced_table_path,
-                    nested_path=nested_path
+                    path=referenced_column_path,
+                    nested_path=nested_path,
+                    done_relations=copy(done_relations)
                 ))
 
-            # CHILDREN
+            # NESTED OBJECTS
             for g, constraint_columns in jx.groupby(jx.filter(relations, {"eq": {"referenced.table.name": position.name, "referenced.table.schema": position.schema}}), "constraint.name"):
                 g = unwrap(g)
                 constraint_columns = deepcopy(constraint_columns)
                 if g["constraint.name"] in done_relations:
                     continue
-                done_relations.append(g["constraint.name"])
+                done_relations.add(g["constraint.name"])
 
                 many_table = set(constraint_columns.table.name)
                 if not (many_table - self.settings.exclude):
                     continue
 
-                referenced_table_path = join_field(split_field(path) + ["/".join(many_table)])
-                new_nested_path = [referenced_table_path] + nested_path
+                referenced_column_path = join_field(split_field(path) + ["/".join(many_table)])
+                new_nested_path = [referenced_column_path] + nested_path
                 all_nested_paths.append(new_nested_path)
 
                 # if new_path not in self.settings.include:
                 #     Log.note("Exclude nested path {{path}}", path=new_path)
                 #     continue
-                one_to_many_joins = nested_path_to_join[referenced_table_path] = copy(curr_join_list)
+                one_to_many_joins = nested_path_to_join[referenced_column_path] = copy(curr_join_list)
                 index = len(one_to_many_joins)
                 alias = "t"+unicode(index)
                 for c in constraint_columns:
@@ -389,7 +400,7 @@ class Extract(object):
 
                 for col in columns:
                     if col.table.name == constraint_columns[0].table.name and col.table.schema == constraint_columns[0].table.schema:
-                        col_full_name = join_field(split_field(referenced_table_path)[len(split_field(new_nested_path[0])):]+[literal_field(col.column.name)])
+                        col_full_name = join_field(split_field(referenced_column_path)[len(split_field(new_nested_path[0])):]+[literal_field(col.column.name)])
 
                         if col.column.name == constraint_columns[0].column.name:
                             c_index = len(output_columns)
@@ -397,7 +408,7 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": referenced_table_path,
+                                "path": referenced_column_path,
                                 "nested_path": new_nested_path,
                                 "put": col_full_name if self.settings.show_foreign_keys else None
                             })
@@ -407,7 +418,7 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": referenced_table_path,
+                                "path": referenced_column_path,
                                 "nested_path": new_nested_path,
                                 "put": col_full_name if self.settings.show_foreign_keys else None
                             })
@@ -417,15 +428,16 @@ class Extract(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
-                                "path": referenced_table_path,
+                                "path": referenced_column_path,
                                 "nested_path": new_nested_path,
                                 "put": col_full_name
                             })
 
                 todo.append(Data(
                     position=constraint_columns[0].table,
-                    path=referenced_table_path,
-                    nested_path=new_nested_path
+                    path=referenced_column_path,
+                    nested_path=new_nested_path,
+                    done_relations=copy(done_relations)
                 ))
 
         path = "."
@@ -439,7 +451,8 @@ class Extract(object):
         todo.append(Data(
             position=ids_table,
             path=path,
-            nested_path=nested_path
+            nested_path=nested_path,
+            done_relations=set()
         ))
 
         while todo:
@@ -475,7 +488,7 @@ class Extract(object):
                 curr_join = wrap(curr_join)
                 rel = curr_join.join_columns[0]
                 if i == 0:
-                    sql_joins.append("\nFROM (" + self.settings.ids + ") AS " + rel.referenced.table.alias)
+                    sql_joins.append("\nFROM (" + expand_template(self.settings.extract.ids, {"last": self.last}) + ") AS " + rel.referenced.table.alias)
                 elif curr_join.children:
                     full_name = self.db.quote_column(rel.table.name, rel.table.schema)
                     sql_joins.append(
@@ -523,7 +536,7 @@ class Extract(object):
         return sql
 
     def extract(self, meta):
-        columns = meta.columns
+        columns = tuple(wrap(c) for c in unwrap(meta.columns))
 
         # ORDERING
         sort = []
@@ -537,50 +550,105 @@ class Extract(object):
         sql = "\nUNION ALL\n".join(meta.sql)
         sql = "SELECT * FROM (" + sql + ") as a\nORDER BY " + ",".join(sort)
 
-        Log.note("{{sql}}", sql=sql)
+        if DEBUG:
+            Log.note("{{sql}}", sql=sql)
+        with Timer("Sending SQL"):
+            cursor = self.db.db.cursor()
+            cursor.execute(sql)
 
-        cursor = self.db.db.cursor()
-        cursor.execute(sql)
-        data = list(cursor)
-        cursor.close()
+        start_id = None
+        batch_size = self.settings.extract.batch
+        last = self.last
+        curr = Null
+        key_field = self.settings.extract.field
+        fact_table = self.settings.fact_table
+        null_values = set(self.settings.null_values) | {None}
 
-        File("output/cursor.json").write(convert.value2json(data, pretty=True))
+        output = File(NamedTemporaryFile(delete=False).name)
+        def append(value):
+            if value[key_field] >= start_id + batch_size:
+                return
 
-        # data = convert.json2value(File("output/cursor.json").read())
+            output.append(convert.value2json({
+                fact_table: value,
+                "etl": {
+                    "timestamp": Date.now(),
+                    "revision": get_git_revision(),
+                    "machine": machine_metadata
+                }
+            }))
 
-        output = []
-        null_values=set(self.settings.null_values) | {None}
+        with Timer("Begin copying from MySQL"):
+            try:
+                for rownum, row in enumerate(cursor):
+                    nested_path = []
+                    curr_record = None
+                    # Log.note(
+                    #     "\n{{data}}",
+                    #     data="\n".join(
+                    #         join_field(split_field(c.path)+[c.column.column.name])+": "+convert.value2json(v)
+                    #         for c, v in zip(columns, row)
+                    #         if v != None
+                    #     )
+                    # )
+                    for c, value in zip(columns, row):
+                        if value in null_values:
+                            continue
+                        if len(nested_path) < len(c.nested_path):
+                            nested_path = c.nested_path
+                            curr_record = Data()
+                        if c.put != None:
+                            try:
+                                curr_record[c.put] = value
+                            except Exception, e:
+                                Log.warning("should not happen", cause=e)
 
-        for row in data:
-            nested_path = []
-            curr_record = None
-            for ci, c in enumerate(columns):
-                value = row[ci]
-                if value in null_values:
-                    continue
-                if len(nested_path) < len(c.nested_path):
-                    nested_path = c.nested_path
-                    curr_record = Data()
-                if c.put != None:
-                    try:
-                        curr_record[c.put] = value
-                    except Exception, e:
-                        Log.warning("should not happen", cause=e)
+                    if len(nested_path) == 1:
+                        if curr != curr_record:
+                            core_record = curr_record[key_field]
+                            start_id = Math.floor(Math.MIN([start_id, core_record[key_field]]), batch_size)
+                            if not (last[key_field] > core_record[key_field]):  # TRINARY LOGIC
+                                last = core_record
+                            if curr:
+                                append(curr[key_field])
 
-            children = output
-            for n in jx.reverse(nested_path)[1::]:
-                parent = children[-1]
-                children = parent[n]
-                if children == None:
-                    children = parent[n] = []
+                        curr = curr_record
+                    else:
+                        n = nested_path[-1]
+                        children = curr[n]
+                        if children == None:
+                            children = curr[n] = []
+                        for n in list(reversed(nested_path[1:-1:])):
+                            parent = children[-1]
+                            children = parent[n]
+                            if children == None:
+                                children = parent[n] = []
 
-            children.append(curr_record)
+                        children.append(curr_record)
 
-        File("output/result.json").write(convert.value2json(output, pretty=True))
-        # Log.note("{{data}}", data=output)
+                append(curr[key_field])
+            finally:
+                cursor.close()
 
-        # PUSH TO S3
-        pass
+        if not last:
+            Log.error("no last record encountered")
+
+        # WRITE TO S3
+        # now = Date.now()
+        # today = now.floor(DAY)
+        # day_of_etl = unicode(int((today-Date("1 JAN 2015"))/DAY))
+        # hour_of_day = unicode(now.hour)
+        unicode(Math.round(start_id/batch_size))
+        file_name = unicode(Math.round(start_id/batch_size))
+        bucket = s3.Bucket(self.settings.destination)
+        if not DEBUG and bucket.get_meta(file_name):
+            Log.error("Not expecting {{key}} to exist", key=file_name)
+        destination = bucket.get_key(file_name, must_exist=False)
+        destination.write(output)
+        output.delete()
+
+        # SUCCESS!!
+        File(self.settings.extract.last).write(convert.value2json(last))
 
 
 def main():

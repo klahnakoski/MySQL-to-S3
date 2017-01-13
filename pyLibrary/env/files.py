@@ -251,6 +251,9 @@ class File(object):
             output_file.write(content.encode("utf-8"))
             output_file.write(b"\n")
 
+    def __len__(self):
+        return os.path.getsize(self.abspath)
+
     def add(self, content):
         return self.append(content)
 
