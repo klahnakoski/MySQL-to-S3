@@ -14,10 +14,9 @@ from __future__ import unicode_literals
 
 from copy import deepcopy, copy
 
-from pyLibrary import strings, convert
-from pyLibrary.debugs import constants, startup
-from pyLibrary.debugs.logs import Log
-from pyLibrary.dot import Dict, wrap, join_field, set_default, startswith_field, Null, split_field, DictList, coalesce, literal_field, unwrap, relative_field, concat_field
+from MoLogs import Log, strings, startup, constants
+from pyDots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field
+from pyLibrary import convert
 from pyLibrary.env.files import File
 from pyLibrary.maths.randoms import Random
 from pyLibrary.meta import use_settings
@@ -30,7 +29,7 @@ class Extract(object):
 
     @use_settings
     def __init__(self, settings=None):
-        self.settings=settings
+        self.settings = settings
         self.settings.exclude = set(self.settings.exclude)
         self.settings.show_foreign_keys = coalesce(self.settings.show_foreign_keys, True)
         processes = None
@@ -41,6 +40,10 @@ class Extract(object):
             Log.warning("no database", cause=e)
         if processes:
             Log.error("Processes are running\n{{list|json}}", list=processes)
+        try:
+            self.last = File(settings.last.file).read_json()
+        except Exception:
+            self.last = settings.last.default
 
     def make_sql(self):
         # GET ALL RELATIONS
@@ -65,7 +68,7 @@ class Extract(object):
                 a, b = map(strings.trim, r.split("->"))
                 a = a.split(".")
                 b = b.split(".")
-                raw_relations.append(Dict(
+                raw_relations.append(Data(
                     table_schema=a[0],
                     table_name=a[1],
                     referenced_table_schema=b[0],
@@ -231,8 +234,8 @@ class Extract(object):
             columns.add(rel)
 
         # ITERATE OVER ALL PATHS
-        todo = DictList()
-        output_columns = DictList()
+        todo = FlatList()
+        output_columns = FlatList()
         nested_path_to_join = {}
         all_nested_paths = [["."]]
         done_relations = []
@@ -256,7 +259,7 @@ class Extract(object):
                 constraint_columns = deepcopy(constraint_columns)
                 if g["constraint.name"] in done_relations:
                     continue
-                if any(c for c in constraint_columns if c.referenced.table.name in self.settings.exclude):
+                if any(cc for cc in constraint_columns if cc.referenced.table.name in self.settings.exclude):
                     continue
 
                 done_relations.append(g["constraint.name"])
@@ -346,7 +349,7 @@ class Extract(object):
                 if position.name in reference_only_tables:
                     continue
 
-                todo.append(Dict(
+                todo.append(Data(
                     position=constraint_columns[0].referenced.table.copy(),
                     path=referenced_table_path,
                     nested_path=nested_path
@@ -419,7 +422,7 @@ class Extract(object):
                                 "put": col_full_name
                             })
 
-                todo.append(Dict(
+                todo.append(Data(
                     position=constraint_columns[0].table,
                     path=referenced_table_path,
                     nested_path=new_nested_path
@@ -433,7 +436,7 @@ class Extract(object):
             "nested_path": nested_path
         }]
 
-        todo.append(Dict(
+        todo.append(Data(
             position=ids_table,
             path=path,
             nested_path=nested_path
@@ -445,7 +448,7 @@ class Extract(object):
 
         sql = self.compose_sql(all_nested_paths, nested_path_to_join, output_columns)
 
-        return Dict(
+        return Data(
             sql=sql,
             columns=output_columns,
             where=self.settings.where
@@ -474,7 +477,7 @@ class Extract(object):
                 if i == 0:
                     sql_joins.append("\nFROM (" + self.settings.ids + ") AS " + rel.referenced.table.alias)
                 elif curr_join.children:
-                    full_name = self.db.quote_column(rel.table.schema) + "." + self.db.quote_column(rel.table.name)
+                    full_name = self.db.quote_column(rel.table.name, rel.table.schema)
                     sql_joins.append(
                         "\nJOIN " + full_name + " AS " + rel.table.alias +
                         "\nON " + " AND ".join(
@@ -532,7 +535,7 @@ class Extract(object):
                 ordering.append(ci)
 
         sql = "\nUNION ALL\n".join(meta.sql)
-        sql = "SELECT * FROM ("+sql+") as a\nORDER BY "+",".join(sort)
+        sql = "SELECT * FROM (" + sql + ") as a\nORDER BY " + ",".join(sort)
 
         Log.note("{{sql}}", sql=sql)
 
@@ -557,7 +560,7 @@ class Extract(object):
                     continue
                 if len(nested_path) < len(c.nested_path):
                     nested_path = c.nested_path
-                    curr_record = Dict()
+                    curr_record = Data()
                 if c.put != None:
                     try:
                         curr_record[c.put] = value

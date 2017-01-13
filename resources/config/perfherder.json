@@ -1,12 +1,12 @@
 {
 	"last": {
 		"file": "output/perfherder.json",
-		"default": {"last_modified": 0}
+		"default": {"id": 1}
 	},
-	"fact_table": "job",
+	"fact_table": "performance_datum",
 	"show_foreign_keys": false,
 	"null_values": ["-", "unknown", ""],
-	"ids": "select id from (select last_modified, id from job order by id desc limit 1000000) where last_modified>={{last.last_modified}} order by id desc limit 10",
+	"ids": "select id from performance_datum where id>={{last.id}} order by id desc limit 10",
 	"add_relations":[
 		"treeherder.performance_datum.ds_job_id -> treeherder.job.project_specific_id",
 		"treeherder.performance_datum.repository_id -> treeherder.job.repository_id",
@@ -18,11 +18,7 @@
 		"runnable_job",
 		"auth_user",
 		"job_log",
-		"text_log_step",
-//		"commit",
-		"performance_datum",
-		"performance_alert_summary",
-		"performance_signature"
+		"text_log_step"
 	],
 	"reference_only": [
 		"user.email",
