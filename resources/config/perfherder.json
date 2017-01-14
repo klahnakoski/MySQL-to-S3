@@ -2,7 +2,9 @@
 	"extract": {
 		"last": "output/perfherder_last_run.json",
 		"field": "id",
+		"type": "number",
 		"default": 1,
+		"start": 0,
 		"batch": 10000,
 		"ids": "select id from performance_datum where floor({{last.id}}/10000)*10000 <= id order by id limit 10000"
 	},

@@ -12,12 +12,14 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import unicode_literals
 
+from contextlib import closing
 from copy import deepcopy, copy
 from tempfile import NamedTemporaryFile
 
 from MoLogs import Log, strings, startup, constants, machine_metadata
 from MoLogs.strings import expand_template
-from pyDots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field
+from mysql_to_s3 import lt, _key2etl
+from pyDots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field, listwrap
 from pyLibrary import convert
 from pyLibrary.aws import s3
 from pyLibrary.env.files import File
@@ -29,7 +31,7 @@ from pyLibrary.queries import jx
 from pyLibrary.queries.unique_index import UniqueIndex
 from pyLibrary.sql.mysql import MySQL
 from pyLibrary.times.dates import Date
-from pyLibrary.times.durations import DAY
+from pyLibrary.times.durations import Duration
 from pyLibrary.times.timer import Timer
 
 DEBUG = True
@@ -41,6 +43,12 @@ class Extract(object):
         self.settings = settings
         self.settings.exclude = set(self.settings.exclude)
         self.settings.show_foreign_keys = coalesce(self.settings.show_foreign_keys, True)
+        self._extract = extract = settings.extract
+
+        # SOME PREP
+        get_git_revision()
+
+        # VERIFY WE DO NOT HAVE TOO MANY OTHER PROCESSES WORKING ON STUFF
         processes = None
         try:
             self.db = MySQL(**settings.database)
@@ -49,11 +57,76 @@ class Extract(object):
             Log.warning("no database", cause=e)
         # if processes:
         #     Log.error("Processes are running\n{{list|json}}", list=processes)
+
+        # self.last IS THE FIRST RECORD IN THE CURRENT BATCH (AND HAS BEEN WRITTEN TO S3)
         try:
-            self.last = File(settings.extract.last).read_json()
+            self.last = File(extract.last).read_json()
         except Exception:
-            self.last = wrap({settings.extract.field: settings.extract.default})
-        Log.note("Starting scan of {{table}} at {{id}}", table=self.settings.fact_table, id=self.last[self.settings.extract.field])
+            self.last = wrap({f: v for f, v in zip(listwrap(extract.field), listwrap(extract.start))})
+
+        extract.type = listwrap(extract.type)
+        extract.start = listwrap(extract.start)
+        extract.batch = listwrap(extract.batch)
+        extract.field = listwrap(extract.field)
+        if any(len(extract.type) != len(other) for other in [extract.start, extract.batch, extract.field]):
+            Log.error("Expecting same number of dimensionst for `type`, `start`, `batch`, and `field` in the `extract` inner object")
+        for i, t in enumerate(extract.type):
+            if t == "time":
+                extract.start[i] = Date(extract.start[i])
+                extract.batch[i] = Duration(extract.batch[i])
+                self.last[extract.field[i]] = Date(self.last[extract.field[i]])
+            elif t == "number":
+                pass
+            else:
+                Log.error('Expecting `extract.type` to be "number" or "time"')
+
+        # DETERMINE WHICH etl.id WE WROTE TO LAST
+        last_key = self._get_key(self.last)
+        self.bucket = s3.Bucket(self.settings.destination)
+        self.last_batch = 0
+        existing = self.bucket.keys(prefix=".".join(self._get_s3_name(last_key).split(".")[:-1]))
+        self.last_batch = coalesce(wrap(sorted(int(e.split(".")[-1]) for e in existing)).last(), 0)
+
+    def _get_key(self, r):
+        output = tuple(
+            Date(r[k]) if t == "time" else r[k]
+            for t, k in zip(self._extract.type, self._extract.field)
+        )
+        return output
+
+    def _belongs_to_next_batch(self, key):
+        """
+        :param key: key
+        :return: True if belongs to next batch, given self.last is in curret batch
+        """
+
+        last_key = self._get_key(self.last)
+        for k, l, t, b in zip(key, last_key, self._extract.type, self._extract.batch):
+            if t=="time":
+                if k.floor(b) > l.floor(b):
+                    return True
+            else:
+                if Math.floor(k, b) > Math.floor(l, b):
+                    return True
+        return False
+
+    def _get_etl(self, key):
+        etl = None
+        for k, t, s, b in zip(key, self._extract.type, self._extract.start, self._extract.batch)[:-1]:
+            id = Math.round((k - s) / b, decimal=0)
+            etl = {"id": id, "source": etl}
+
+        id = self.last_batch
+        etl = {"id": id, "source": etl}
+        return etl
+
+    def _get_s3_name(self, key):
+        ids = []
+        for k, t, s, b in zip(key, self._extract.type, self._extract.start, self._extract.batch)[:-1]:
+            id = Math.round((k - s) / b, decimal=0)
+            ids.append(unicode(id))
+        ids.append(unicode(self.last_batch))
+        return ".".join(ids)
 
     def make_sql(self):
         # GET ALL RELATIONS
@@ -536,6 +609,13 @@ class Extract(object):
         return sql
 
     def extract(self, meta):
+        Log.note(
+            "Starting scan of {{table}} at {{id}} and sending to batch {{num}}",
+            table=self.settings.fact_table,
+            id=[self.last[f] for f in self._extract.field],
+            num=self.last_batch
+        )
+
         columns = tuple(wrap(c) for c in unwrap(meta.columns))
 
         # ORDERING
@@ -556,41 +636,42 @@ class Extract(object):
             cursor = self.db.db.cursor()
             cursor.execute(sql)
 
-        start_id = None
-        batch_size = self.settings.extract.batch
-        last = self.last
+        extract = self.settings.extract
         curr = Null
-        key_field = self.settings.extract.field
         fact_table = self.settings.fact_table
         null_values = set(self.settings.null_values) | {None}
 
+        count = 0
         output = File(NamedTemporaryFile(delete=False).name)
-        def append(value):
-            if value[key_field] >= start_id + batch_size:
-                return
+
+        def append(value, i):
+            """
+            :param value: THE DOCUMENT TO ADD
+            :return: PleaseStop
+            """
+            etl = self._get_etl(self._get_key(value))
 
             output.append(convert.value2json({
                 fact_table: value,
                 "etl": {
+                    "id": i,
+                    "source": etl,
                     "timestamp": Date.now(),
                     "revision": get_git_revision(),
                     "machine": machine_metadata
                 }
             }))
 
+        last = self.last
+        last_key = self._get_key(last)
+        file_name = self._get_s3_name(last_key)
+
         with Timer("Begin copying from MySQL"):
-            try:
-                for rownum, row in enumerate(cursor):
+            with closing(cursor):
+                for row in cursor:
                     nested_path = []
                     curr_record = None
-                    # Log.note(
-                    #     "\n{{data}}",
-                    #     data="\n".join(
-                    #         join_field(split_field(c.path)+[c.column.column.name])+": "+convert.value2json(v)
-                    #         for c, v in zip(columns, row)
-                    #         if v != None
-                    #     )
-                    # )
+
                     for c, value in zip(columns, row):
                         if value in null_values:
                             continue
@@ -603,17 +684,7 @@ class Extract(object):
                             except Exception, e:
                                 Log.warning("should not happen", cause=e)
 
-                    if len(nested_path) == 1:
-                        if curr != curr_record:
-                            core_record = curr_record[key_field]
-                            start_id = Math.floor(Math.MIN([start_id, core_record[key_field]]), batch_size)
-                            if not (last[key_field] > core_record[key_field]):  # TRINARY LOGIC
-                                last = core_record
-                            if curr:
-                                append(curr[key_field])
-
-                        curr = curr_record
-                    else:
+                    if len(nested_path) != 1:
                         n = nested_path[-1]
                         children = curr[n]
                         if children == None:
@@ -625,30 +696,52 @@ class Extract(object):
                                 children = parent[n] = []
 
                         children.append(curr_record)
+                        continue
 
-                append(curr[key_field])
-            finally:
-                cursor.close()
+                    if curr == curr_record:
+                        Log.error("not expected")
+
+                    # append RECORD TO output
+                    core_record = curr_record["id"]
+                    core_id = self._get_key(core_record)
+
+                    if lt(core_id, last_key):
+                        last = core_record
+                        last_key = self._get_key(last)
+                    if curr:
+                        if count >= self._extract.batch[-1] or self._belongs_to_next_batch(core_id):
+                            last = core_record
+                            last_key = core_id
+                        else:
+                            append(curr["id"], count)
+                            count += 1
+                    curr = curr_record
+
+            # DEAL WITH LAST RECORD
+            if curr:
+                if count >= self._extract.batch.last() or self._belongs_to_next_batch(core_id):
+                    last = core_record
+                    last_key = core_id
+                else:
+                    append(curr["id"], count)
+                    count += 1
+
+        Log.note("{{num}} records written", num=count)
 
         if not last:
             Log.error("no last record encountered")
 
         # WRITE TO S3
-        # now = Date.now()
-        # today = now.floor(DAY)
-        # day_of_etl = unicode(int((today-Date("1 JAN 2015"))/DAY))
-        # hour_of_day = unicode(now.hour)
-        unicode(Math.round(start_id/batch_size))
-        file_name = unicode(Math.round(start_id/batch_size))
-        bucket = s3.Bucket(self.settings.destination)
-        if not DEBUG and bucket.get_meta(file_name):
-            Log.error("Not expecting {{key}} to exist", key=file_name)
-        destination = bucket.get_key(file_name, must_exist=False)
+        destination = self.bucket.get_key(file_name, must_exist=False)
         destination.write(output)
         output.delete()
 
         # SUCCESS!!
-        File(self.settings.extract.last).write(convert.value2json(last))
+        if self._belongs_to_next_batch(last_key):
+            self.last_batch += 1
+            File(extract.last).write(convert.value2json(last))
+            return True
+        return False
 
 
 def main():
@@ -662,10 +755,8 @@ def main():
         # Log.note("{{sql}}", sql=meta.sql)
         File("output/meta.json").write(convert.value2json(meta, pretty=True, sort_keys=True))
         meta = convert.json2value(File("output/meta.json").read())
-        e.extract(meta)
-
-        # Log.note("{{sql}}", sql=sql)
-
+        while e.extract(meta):
+            pass
     except Exception, e:
         Log.error("Problem with data extraction", e)
     finally:
