@@ -258,7 +258,8 @@ class SnowflakeSchema(object):
         def follow_paths(position, path, nested_path, done_relations):
             if position.name in self.settings.exclude:
                 return
-            Log.note("Trace {{path}}", path=path)
+            if DEBUG:
+                Log.note("Trace {{path}}", path=path)
             if position.name!="__ids__":
                 self.db.query("SELECT * FROM "+self.db.quote_column(position.name, position.schema)+" LIMIT 1")
 

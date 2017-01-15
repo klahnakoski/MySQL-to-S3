@@ -28,7 +28,6 @@ from pyLibrary.maths import Math
 from pyLibrary.meta import use_settings
 from pyLibrary.queries import jx
 from pyLibrary.sql.mysql import MySQL
-from pyLibrary.thread.signal import Signal
 from pyLibrary.thread.threads import Thread
 from pyLibrary.times.dates import Date
 from pyLibrary.times.durations import Duration
@@ -60,9 +59,9 @@ class Extract(object):
 
         # self.last IS THE FIRST RECORD IN THE CURRENT BATCH (AND HAS BEEN WRITTEN TO S3)
         try:
-            self.last = File(extract.last).read_json()
+            self.first = File(extract.last).read_json()
         except Exception:
-            self.last = wrap({f: v for f, v in zip(listwrap(extract.field), listwrap(extract.start))})
+            self.first = wrap({f: v for f, v in zip(listwrap(extract.field), listwrap(extract.start))})
 
         extract.type = listwrap(extract.type)
         extract.start = listwrap(extract.start)
@@ -74,17 +73,17 @@ class Extract(object):
             if t == "time":
                 extract.start[i] = Date(extract.start[i])
                 extract.batch[i] = Duration(extract.batch[i])
-                self.last[extract.field[i]] = Date(self.last[extract.field[i]])
+                self.first[extract.field[i]] = Date(self.first[extract.field[i]])
             elif t == "number":
                 pass
             else:
                 Log.error('Expecting `extract.type` to be "number" or "time"')
 
         # DETERMINE WHICH etl.id WE WROTE TO LAST
-        self.last_key = self._get_key(self.last)
+        self.first_key = self._get_key(self.first)
         self.bucket = s3.Bucket(self.settings.destination)
         self.last_batch = 0
-        prefix = ".".join(self._get_s3_name(self.last_key).split(".")[:-1])
+        prefix = ".".join(self._get_s3_name(self.first_key).split(".")[:-1])
         if not prefix:
             prefix = None
         existing = self.bucket.keys(prefix=prefix)
@@ -104,7 +103,7 @@ class Extract(object):
         """
 
         # self.last_key = self._get_key(self.last)
-        for k, l, t, b in zip(key, self.last_key, self._extract.type, self._extract.batch):
+        for k, l, t, b in zip(key, self.first_key, self._extract.type, self._extract.batch):
             if t=="time":
                 if k.floor(b) > l.floor(b):
                     return True
@@ -135,18 +134,18 @@ class Extract(object):
         Log.note(
             "Starting scan of {{table}} at {{id}} and sending to batch {{num}}",
             table=self.settings.snowflake.fact_table,
-            id=[self.last[f] for f in self._extract.field],
+            id=[self.first[f] for f in self._extract.field],
             num=self.last_batch
         )
 
-        sql = self.schema.get_sql(expand_template(self.settings.extract.ids, {"last": self.last}))
+        sql = self.schema.get_sql(expand_template(self.settings.extract.ids, {"last": self.first}))
         with Timer("Sending SQL"):
             cursor = self.db.db.cursor()
             cursor.execute(sql)
 
         extract = self.settings.extract
         curr_record = Null
-        fact_table = self.settings.fact_table
+        fact_table = self.settings.snowflake.fact_table
         null_values = set(self.settings.null_values) | {None}
 
         count = 0
@@ -171,8 +170,9 @@ class Extract(object):
             }))
 
         next = next_key = None
-        first = self.last
+        first = self.first
         first_key = self._get_key(first)
+        batch_size=self._extract.batch.last()
 
         file_name = self._get_s3_name(first_key)
 
@@ -221,7 +221,7 @@ class Extract(object):
                         first = core_record
                         first_key = core_id
                     if curr_record:
-                        if count >= self._extract.batch[-1] or self._belongs_to_next_batch(core_id):
+                        if count >= batch_size or self._belongs_to_next_batch(core_id):
                             if next_key is None or lt(core_id, next_key):
                                 next = core_record
                                 next_key = core_id
@@ -232,7 +232,9 @@ class Extract(object):
 
             # DEAL WITH LAST RECORD
             if curr_record:
-                if count >= self._extract.batch[-1] or self._belongs_to_next_batch(core_id):
+                core_record = curr_record["id"]
+                core_id = self._get_key(core_record)
+                if count >= batch_size or self._belongs_to_next_batch(core_id):
                     if next_key is None or lt(core_id, next_key):
                         next = core_record
                         next_key = core_id
@@ -252,8 +254,8 @@ class Extract(object):
 
         # SUCCESS!!
         if count >= self._extract.batch.last() or self._belongs_to_next_batch(next_key):
-            self.last = next
-            self.last_key = next_key
+            self.first = next
+            self.first_key = next_key
             self.last_batch += 1
             File(extract.last).write(convert.value2json(next))
             return True
