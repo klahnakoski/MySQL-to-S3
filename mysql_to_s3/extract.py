@@ -28,6 +28,7 @@ from pyLibrary.maths import Math
 from pyLibrary.meta import use_settings
 from pyLibrary.queries import jx
 from pyLibrary.sql.mysql import MySQL
+from pyLibrary.thread.threads import Thread
 from pyLibrary.times.dates import Date
 from pyLibrary.times.durations import Duration
 from pyLibrary.times.timer import Timer
@@ -170,7 +171,7 @@ class Extract(object):
 
         columns = tuple(wrap(c) for c in self.schema.columns)
 
-        with Timer("Begin copying from MySQL"):
+        with Timer("Downloading from MySQL"):
             with closing(cursor):
                 for row in cursor:
                     nested_path = []
@@ -254,9 +255,13 @@ def main():
         constants.set(settings.constants)
         Log.start(settings.debug)
 
-        e = Extract(settings)
-        while e.extract():
-            pass
+        def extract(please_stop):
+            e = Extract(settings)
+            while e.extract() and not please_stop:
+                pass
+
+        Thread.run("extracting", extract)
+        Thread.wait_for_shutdown_signal(allow_exit=True)
     except Exception, e:
         Log.error("Problem with data extraction", e)
     finally:
