@@ -22,7 +22,7 @@ from pyLibrary.queries import jx
 from pyLibrary.queries.unique_index import UniqueIndex
 from pyLibrary.sql.mysql import MySQL
 
-DEBUG = True
+DEBUG = False
 
 
 class SnowflakeSchema(object):

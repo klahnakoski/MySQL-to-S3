@@ -562,7 +562,6 @@ class Thread(object):
             _Log.alert("SIGINT Detected!  Stopping...")
         finally:
             please_stop.go()
-        _stop_main_thread()
 
     @staticmethod
     def current():

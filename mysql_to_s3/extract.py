@@ -28,12 +28,14 @@ from pyLibrary.maths import Math
 from pyLibrary.meta import use_settings
 from pyLibrary.queries import jx
 from pyLibrary.sql.mysql import MySQL
+from pyLibrary.thread.signal import Signal
 from pyLibrary.thread.threads import Thread
 from pyLibrary.times.dates import Date
 from pyLibrary.times.durations import Duration
 from pyLibrary.times.timer import Timer
 
 DEBUG = True
+
 
 class Extract(object):
 
@@ -79,10 +81,13 @@ class Extract(object):
                 Log.error('Expecting `extract.type` to be "number" or "time"')
 
         # DETERMINE WHICH etl.id WE WROTE TO LAST
-        last_key = self._get_key(self.last)
+        self.last_key = self._get_key(self.last)
         self.bucket = s3.Bucket(self.settings.destination)
         self.last_batch = 0
-        existing = self.bucket.keys(prefix=".".join(self._get_s3_name(last_key).split(".")[:-1]))
+        prefix = ".".join(self._get_s3_name(self.last_key).split(".")[:-1])
+        if not prefix:
+            prefix = None
+        existing = self.bucket.keys(prefix=prefix)
         self.last_batch = coalesce(wrap(sorted(int(e.split(".")[-1]) for e in existing)).last(), 0)
 
     def _get_key(self, r):
@@ -95,11 +100,11 @@ class Extract(object):
     def _belongs_to_next_batch(self, key):
         """
         :param key: key
-        :return: True if belongs to next batch, given self.last is in curret batch
+        :return: True if belongs to next batch, given self.last is in current batch
         """
 
-        last_key = self._get_key(self.last)
-        for k, l, t, b in zip(key, last_key, self._extract.type, self._extract.batch):
+        # self.last_key = self._get_key(self.last)
+        for k, l, t, b in zip(key, self.last_key, self._extract.type, self._extract.batch):
             if t=="time":
                 if k.floor(b) > l.floor(b):
                     return True
@@ -123,7 +128,7 @@ class Extract(object):
         for k, t, s, b in zip(key, self._extract.type, self._extract.start, self._extract.batch)[:-1]:
             id = Math.round((k - s) / b, decimal=0)
             ids.append(unicode(id))
-        ids.append(unicode(self.last_batch))
+        ids.append(unicode(int(self.last_batch)))
         return ".".join(ids)
 
     def extract(self):
@@ -140,7 +145,7 @@ class Extract(object):
             cursor.execute(sql)
 
         extract = self.settings.extract
-        curr = Null
+        curr_record = Null
         fact_table = self.settings.fact_table
         null_values = set(self.settings.null_values) | {None}
 
@@ -165,9 +170,11 @@ class Extract(object):
                 }
             }))
 
-        last = self.last
-        last_key = self._get_key(last)
-        file_name = self._get_s3_name(last_key)
+        next = next_key = None
+        first = self.last
+        first_key = self._get_key(first)
+
+        file_name = self._get_s3_name(first_key)
 
         columns = tuple(wrap(c) for c in self.schema.columns)
 
@@ -175,65 +182,67 @@ class Extract(object):
             with closing(cursor):
                 for row in cursor:
                     nested_path = []
-                    curr_record = None
+                    next_record = None
 
                     for c, value in zip(columns, row):
                         if value in null_values:
                             continue
                         if len(nested_path) < len(c.nested_path):
                             nested_path = c.nested_path
-                            curr_record = Data()
+                            next_record = Data()
                         if c.put != None:
                             try:
-                                curr_record[c.put] = value
+                                next_record[c.put] = value
                             except Exception, e:
                                 Log.warning("should not happen", cause=e)
 
                     if len(nested_path) != 1:
                         n = nested_path[-1]
-                        children = curr[n]
+                        children = curr_record[n]
                         if children == None:
-                            children = curr[n] = []
+                            children = curr_record[n] = []
                         for n in list(reversed(nested_path[1:-1:])):
                             parent = children[-1]
                             children = parent[n]
                             if children == None:
                                 children = parent[n] = []
 
-                        children.append(curr_record)
+                        children.append(next_record)
                         continue
 
-                    if curr == curr_record:
+                    if curr_record == next_record:
                         Log.error("not expected")
 
                     # append RECORD TO output
-                    core_record = curr_record["id"]
+                    core_record = next_record["id"]
                     core_id = self._get_key(core_record)
 
-                    if lt(core_id, last_key):
-                        last = core_record
-                        last_key = self._get_key(last)
-                    if curr:
+                    if lt(core_id, first_key):
+                        first = core_record
+                        first_key = core_id
+                    if curr_record:
                         if count >= self._extract.batch[-1] or self._belongs_to_next_batch(core_id):
-                            last = core_record
-                            last_key = core_id
+                            if next_key is None or lt(core_id, next_key):
+                                next = core_record
+                                next_key = core_id
                         else:
-                            append(curr["id"], count)
+                            append(curr_record["id"], count)
                             count += 1
-                    curr = curr_record
+                    curr_record = next_record
 
             # DEAL WITH LAST RECORD
-            if curr:
-                if count >= self._extract.batch.last() or self._belongs_to_next_batch(core_id):
-                    last = core_record
-                    last_key = core_id
+            if curr_record:
+                if count >= self._extract.batch[-1] or self._belongs_to_next_batch(core_id):
+                    if next_key is None or lt(core_id, next_key):
+                        next = core_record
+                        next_key = core_id
                 else:
-                    append(curr["id"], count)
+                    append(curr_record["id"], count)
                     count += 1
 
         Log.note("{{num}} records written", num=count)
 
-        if not last:
+        if not first:
             Log.error("no last record encountered")
 
         # WRITE TO S3
@@ -242,9 +251,11 @@ class Extract(object):
         output.delete()
 
         # SUCCESS!!
-        if count >= self._extract.batch.last() or self._belongs_to_next_batch(core_id):
+        if count >= self._extract.batch.last() or self._belongs_to_next_batch(next_key):
+            self.last = next
+            self.last_key = next_key
             self.last_batch += 1
-            File(extract.last).write(convert.value2json(last))
+            File(extract.last).write(convert.value2json(next))
             return True
         return False
 
@@ -260,8 +271,9 @@ def main():
             while e.extract() and not please_stop:
                 pass
 
-        Thread.run("extracting", extract)
+        e = Thread.run("extracting", extract)
         Thread.wait_for_shutdown_signal(allow_exit=True)
+        e.join()
     except Exception, e:
         Log.error("Problem with data extraction", e)
     finally:
