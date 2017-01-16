@@ -6,14 +6,11 @@
 		"start": ["1jan2015", 0],
 		"batch": ["day", 10000],
 		"ids": "select last_modified, id from job where last_modified>='{{last.last_modified}}' order by last_modified, id limit 10001"
-//		"ids": "select id from (select last_modified, id from job where id between {{last.id}}-10000000 and {{last.id}}+10000000) a where last_modified>='{{last.last_modified}}' limit 10000000"
-//		"ids": "select id from (select last_modified, id from job where id between {{last.id}}-10000000 and {{last.id}}+10000000) a where last_modified>='{{last.last_modified}}' and last_modified<date_add(date_add('{{last.last_modified}}', INTERVAL 1 DAY), INTERVAL 1 HOUR) limit 10000000"
-		//		"ids": "select id from (select last_modified, id from job order by id desc limit 1000000) a where last_modified>='{{last.last_modified}}' limit 10000000"
 	},
 	"destination": {
 		"bucket": "active-data-treeherder-jobs",
 		"public": true,
-		"key_format": "a",
+		"key_format": "a.b",
 		"$ref": "file://~/private.json#aws_credentials"
 	},
 	"snowflake": {
