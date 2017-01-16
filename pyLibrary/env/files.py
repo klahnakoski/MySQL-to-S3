@@ -229,7 +229,7 @@ class File(object):
 
                 with io.open(path, "rb") as f:
                     for line in f:
-                        yield utf82unicode(line)
+                        yield utf82unicode(line).rstrip()
             except Exception, e:
                 from MoLogs import Log
 

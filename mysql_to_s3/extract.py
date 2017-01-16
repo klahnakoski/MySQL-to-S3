@@ -19,7 +19,7 @@ from MoLogs import Log, startup, constants, machine_metadata
 from MoLogs.strings import expand_template
 from mysql_to_s3 import lt
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
-from pyDots import coalesce, Data, wrap, Null, listwrap
+from pyDots import coalesce, Data, wrap, Null, listwrap, unwrap
 from pyLibrary import convert
 from pyLibrary.aws import s3
 from pyLibrary.env.files import File
@@ -28,6 +28,7 @@ from pyLibrary.maths import Math
 from pyLibrary.meta import use_settings
 from pyLibrary.queries import jx
 from pyLibrary.sql.mysql import MySQL
+from pyLibrary.thread.signal import Signal
 from pyLibrary.thread.threads import Thread
 from pyLibrary.times.dates import Date
 from pyLibrary.times.durations import Duration
@@ -134,7 +135,7 @@ class Extract(object):
         Log.note(
             "Starting scan of {{table}} at {{id}} and sending to batch {{num}}",
             table=self.settings.snowflake.fact_table,
-            id=[self.first[f] for f in self._extract.field],
+            id=self.first_key,
             num=self.last_batch
         )
 
@@ -188,7 +189,7 @@ class Extract(object):
                         if value in null_values:
                             continue
                         if len(nested_path) < len(c.nested_path):
-                            nested_path = c.nested_path
+                            nested_path = unwrap(c.nested_path)
                             next_record = Data()
                         if c.put != None:
                             try:
@@ -196,16 +197,17 @@ class Extract(object):
                             except Exception, e:
                                 Log.warning("should not happen", cause=e)
 
-                    if len(nested_path) != 1:
-                        n = nested_path[-1]
+                    if len(nested_path) > 1:
+                        n = nested_path[-2]
                         children = curr_record[n]
                         if children == None:
                             children = curr_record[n] = []
-                        for n in list(reversed(nested_path[1:-1:])):
-                            parent = children[-1]
-                            children = parent[n]
-                            if children == None:
-                                children = parent[n] = []
+                        if len(nested_path) > 2:
+                            for n in list(reversed(nested_path[0:-2:])):
+                                parent = children[-1]
+                                children = parent[n]
+                                if children == None:
+                                    children = parent[n] = []
 
                         children.append(next_record)
                         continue
@@ -242,15 +244,16 @@ class Extract(object):
                     append(curr_record["id"], count)
                     count += 1
 
-        Log.note("{{num}} records written", num=count)
+        Log.note("{{num}} records", num=count)
 
         if not first:
             Log.error("no last record encountered")
 
         # WRITE TO S3
-        destination = self.bucket.get_key(file_name, must_exist=False)
-        destination.write(output)
-        output.delete()
+        with Timer("write to s3"):
+            destination = self.bucket.get_key(file_name, must_exist=False)
+            destination.write_lines(output)
+            output.delete()
 
         # SUCCESS!!
         if count >= self._extract.batch.last() or self._belongs_to_next_batch(next_key):
@@ -274,7 +277,9 @@ def main():
                 pass
 
         e = Thread.run("extracting", extract)
-        Thread.wait_for_shutdown_signal(allow_exit=True)
+        please_stop = Signal()
+        e.stopped.on_go(please_stop.go)
+        Thread.wait_for_shutdown_signal(please_stop=please_stop, allow_exit=True)
         e.join()
     except Exception, e:
         Log.error("Problem with data extraction", e)

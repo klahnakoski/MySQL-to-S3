@@ -366,7 +366,7 @@ class SnowflakeSchema(object):
                     continue
 
                 todo.append(Data(
-                    position=constraint_columns[0].referenced.table.copy(),
+                    position=copy(constraint_columns[0].referenced.table),
                     path=referenced_column_path,
                     nested_path=nested_path,
                     done_relations=copy(done_relations)
