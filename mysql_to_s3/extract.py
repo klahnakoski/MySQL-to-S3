@@ -19,7 +19,7 @@ from MoLogs import Log, startup, constants, machine_metadata
 from MoLogs.strings import expand_template
 from mysql_to_s3 import lt
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
-from pyDots import coalesce, Data, wrap, Null, listwrap, unwrap
+from pyDots import coalesce, Data, wrap, Null, listwrap, unwrap, relative_field
 from pyLibrary import convert
 from pyLibrary.aws import s3
 from pyLibrary.env.files import File
@@ -82,13 +82,19 @@ class Extract(object):
 
         # DETERMINE WHICH etl.id WE WROTE TO LAST
         self.first_key = self._get_key(self.first)
-        self.bucket = s3.Bucket(self.settings.destination)
+        if isinstance(self.settings.destination, basestring):
+            self.bucket = None
+        else:
+            self.bucket = s3.Bucket(self.settings.destination)
         self.last_batch = 0
         prefix = ".".join(self._get_s3_name(self.first_key).split(".")[:-1])
         if not prefix:
             prefix = None
-        existing = self.bucket.keys(prefix=prefix)
-        self.last_batch = coalesce(wrap(sorted(int(e.split(".")[-1]) for e in existing)).last(), 0)
+        if self.bucket:
+            existing = self.bucket.keys(prefix=prefix)
+            self.last_batch = coalesce(wrap(sorted(int(e.split(".")[-1]) for e in existing)).last(), 0)
+        else:
+            self.last_batch = 0
 
     def _get_key(self, r):
         output = tuple(
@@ -145,11 +151,8 @@ class Extract(object):
             cursor.execute(sql)
 
         extract = self.settings.extract
-        curr_record = Null
         fact_table = self.settings.snowflake.fact_table
-        null_values = set(self.settings.null_values) | {None}
 
-        count = 0
         output = File(NamedTemporaryFile(delete=False).name)
 
         def append(value, i):
@@ -170,67 +173,108 @@ class Extract(object):
                 }
             }))
 
+        file_name = self._get_s3_name(self.first_key)
+
+        with closing(cursor):
+            count, first, next = self.construct_docs(cursor, append)
+
+        if not first:
+            Log.error("no last record encountered")
+
+        # WRITE TO S3
+        with Timer("write to destination"):
+            if self.bucket:
+                destination = self.bucket.get_key(file_name, must_exist=False)
+            else:
+                destination = File(self.settings.destination)
+            destination.write_lines(output)
+            output.delete()
+
+        # SUCCESS!!
+        if not next:
+            return False
+
+        next_key = self._get_key(next)
+        if count >= self._extract.batch.last() or self._belongs_to_next_batch(next_key):
+            self.first = next
+            self.first_key = next_key
+            self.last_batch += 1
+            File(extract.last).write(convert.value2json(next))
+            return True
+        return False
+
+    def construct_docs(self, cursor, append):
+        """
+        :param cursor: ITERATOR OF RECORDS
+        :param append: METHOD TO CALL WITH CONSTRUCTED DOCUMENT
+        :return: (count, first, next, next_key)
+        number of documents added
+        the first document in the batch
+        the first document of the next batch
+        """
+        batch_size = self._extract.batch.last()
+        curr_record = Null
+        null_values = set(self.settings.null_values) | {None}
         next = next_key = None
         first = self.first
         first_key = self._get_key(first)
-        batch_size=self._extract.batch.last()
 
-        file_name = self._get_s3_name(first_key)
-
+        count = 0
         columns = tuple(wrap(c) for c in self.schema.columns)
-
         with Timer("Downloading from MySQL"):
-            with closing(cursor):
-                for row in cursor:
-                    nested_path = []
-                    next_record = None
+            for row in cursor:
+                nested_path = []
+                next_record = None
 
-                    for c, value in zip(columns, row):
-                        if value in null_values:
-                            continue
-                        if len(nested_path) < len(c.nested_path):
-                            nested_path = unwrap(c.nested_path)
-                            next_record = Data()
-                        if c.put != None:
-                            try:
-                                next_record[c.put] = value
-                            except Exception, e:
-                                Log.warning("should not happen", cause=e)
-
-                    if len(nested_path) > 1:
-                        n = nested_path[-2]
-                        children = curr_record[n]
-                        if children == None:
-                            children = curr_record[n] = []
-                        if len(nested_path) > 2:
-                            for n in list(reversed(nested_path[0:-2:])):
-                                parent = children[-1]
-                                children = parent[n]
-                                if children == None:
-                                    children = parent[n] = []
-
-                        children.append(next_record)
+                for c, value in zip(columns, row):
+                    if value in null_values:
                         continue
+                    if len(nested_path) < len(c.nested_path):
+                        nested_path = unwrap(c.nested_path)
+                        next_record = Data()
+                    if c.put != None:
+                        try:
+                            next_record[c.put] = value
+                        except Exception, e:
+                            Log.warning("should not happen", cause=e)
 
-                    if curr_record == next_record:
-                        Log.error("not expected")
+                if len(nested_path) > 1:
+                    path = nested_path[-2]
+                    children = curr_record[path]
+                    if children == None:
+                        children = curr_record[path] = wrap([])
+                    if len(nested_path) > 2:
+                        parent_path = path
+                        for path in list(reversed(nested_path[0:-2:])):
+                            parent = children.last()
+                            relative_path = relative_field(path, parent_path)
+                            children = parent[relative_path]
+                            if children == None:
+                                children = parent[relative_path] = wrap([])
+                            parent_path=path
 
-                    # append RECORD TO output
-                    core_record = next_record["id"]
-                    core_id = self._get_key(core_record)
+                    children.append(next_record)
+                    continue
 
-                    if lt(core_id, first_key):
-                        first = core_record
-                        first_key = core_id
-                    if curr_record:
-                        if count >= batch_size or self._belongs_to_next_batch(core_id):
-                            if next_key is None or lt(core_id, next_key):
-                                next = core_record
-                                next_key = core_id
-                        else:
-                            append(curr_record["id"], count)
-                            count += 1
-                    curr_record = next_record
+                if curr_record == next_record:
+                    Log.error("not expected")
+
+                # append RECORD TO output
+                core_record = next_record["id"]
+                core_id = self._get_key(core_record)
+
+                if lt(core_id, first_key):
+                    first = core_record
+                    first_key = core_id
+                if curr_record:
+                    if count >= batch_size or self._belongs_to_next_batch(core_id):
+                        if next_key is None or lt(core_id, next_key):
+                            next = core_record
+                            next_key = core_id
+                    else:
+                        append(curr_record["id"], count)
+                        count += 1
+                curr_record = next_record
 
             # DEAL WITH LAST RECORD
             if curr_record:
@@ -243,26 +287,8 @@ class Extract(object):
                 else:
                     append(curr_record["id"], count)
                     count += 1
-
         Log.note("{{num}} records", num=count)
-
-        if not first:
-            Log.error("no last record encountered")
-
-        # WRITE TO S3
-        with Timer("write to s3"):
-            destination = self.bucket.get_key(file_name, must_exist=False)
-            destination.write_lines(output)
-            output.delete()
-
-        # SUCCESS!!
-        if count >= self._extract.batch.last() or self._belongs_to_next_batch(next_key):
-            self.first = next
-            self.first_key = next_key
-            self.last_batch += 1
-            File(extract.last).write(convert.value2json(next))
-            return True
-        return False
+        return count, first, next
 
 
 def main():

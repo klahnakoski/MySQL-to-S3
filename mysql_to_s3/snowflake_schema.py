@@ -21,8 +21,9 @@ from pyLibrary.meta import use_settings
 from pyLibrary.queries import jx
 from pyLibrary.queries.unique_index import UniqueIndex
 from pyLibrary.sql.mysql import MySQL
+from pyLibrary.times.timer import Timer
 
-DEBUG = False
+DEBUG = True
 
 
 class SnowflakeSchema(object):
@@ -40,7 +41,8 @@ class SnowflakeSchema(object):
             self.db = MySQL(**settings.database)
         except Exception, e:
             Log.warning("no database", cause=e)
-        self._scan_database()
+        with Timer("scan database", debug=DEBUG):
+            self._scan_database()
 
     def get_sql(self, get_ids):
         sql = self._compose_sql(get_ids)
