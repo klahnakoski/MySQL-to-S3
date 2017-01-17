@@ -23,7 +23,7 @@ from pyLibrary.queries.unique_index import UniqueIndex
 from pyLibrary.sql.mysql import MySQL
 from pyLibrary.times.timer import Timer
 
-DEBUG = True
+DEBUG = False
 
 
 class SnowflakeSchema(object):

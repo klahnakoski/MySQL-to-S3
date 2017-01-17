@@ -217,7 +217,7 @@ class Extract(object):
         the first document of the next batch
         """
         batch_size = self._extract.batch.last()
-        null_values = set(self.settings.null_values) | {None}
+        null_values = set(self.settings.snowflake.null_values) | {None}
         next = next_key = None
         first = self.first
         first_key = self._get_key(first)
