@@ -1,52 +1,78 @@
 # MySQL-to-S3
 Connects to a database, explores the relations, and extracts the fact table 
-as JSON documents
+as JSON documents, and dumps to S3 (or a file).
 
 ## Objective
 A database can be a complex graph of relations, but there is usually only a 
 few tables that represent the database's facts. This software de-normalizes 
 the database, with respect to these *fact tables*, which results in the 
-hierarchical set of relations which we will call a "snowflake" schema.
+hierarchical set of relations that we will call a "snowflake" schema.
 
 The snowflake schema is used to generate a JSON document for each record in the 
-fact table. Many-to-one relations (lookup table) are represented as inner 
+fact table. Many-to-one relations (lookup tables) are represented as inner 
 objects, One-to-many relations (children) are represented as nested objects.
 
-### Nomenclature
-
-"Relational id" refers to a column, or set of columns, that's used in the foreign-key relations
 
 ## Denormalization
 
-The denormalization process involves walking all foreign key paths, breadth first and without cycles, from the fact table outward.  This walk requires some guidance to make the JSON beautiful.
+The denormalization process involves walking all foreign key paths, breadth first and without cycles, from the fact table outward.  This creates a snowflake subset-schema from the original database. This walk requires some guidance to make the JSON beautiful.
 
-Each fact table is uses a configuration file to control the denormalization process. Here are the properties  
+Each fact table is uses a configuration file to control the denormalization process. There are three major properties.  I will use the Treeherder job extract configuration as an example:  
+ 
+###Extract
 
-* `show_foreign_keys` - *default true* - Include the foreign key ids. This is useful if you require those ids for later synchronization. If you are only interested in the relationships, then they can be left out, and the JSON will be simpler for not having to hold those ids.
-* `ids` - An important piece of SQL that will produce the set of keys to extract from the fact table.  This allows you to specify any query that can leverage indexes to increase performance.  You can use the name of the `prime_field`, which is the largest value of the previous successful extract.
-* `prime_field` - Field to track between extracts; it should be a timestamp, or constantly increasing value, that can help find all changes since the last run.  This extract program will record the maximum value seen to the file system so subsequent runs can continue where it left off. 
-* `null_value` - Some databases use a variety of values that indicate *no value*. The database `NULL` is always considered missing, and these values are mapped to `NULL` too.
-* `add_relations` -  Relations are important for the denormalization.  If your database is missing relations, you can add them here. 
-* `exclude` - Some tables are not needed: They may be irrelevant for the extraction process, or they may contain sensitive information, or you may not have permissions to access the contents. In all these cases, the tables can be added to this list
-* `reference_only` - Tables can be used to lookup primitive values, or you are not interested in the full expressions of row in a table. In these cases you probably want the uid replaced with the canonical value that uid represents.  For example `user_id` refers to the `users` table, which has a `email` column. Every `user_id` column, can be represented with a `users` property having the `email` value. This effectively removes the relational ids and simplifies the JSON.  
-* `database` - required properties to connect to the database. Must include `schema` so that the `fact_table` name has context.
+Controls the what records get pulled, the size of the batch, and how to name those batches
+
+	"extract": {
+		"last": "output/treeherder_last_run.json",
+		"field": ["last_modified", "id"],
+		"type": ["time", "number"],
+		"start": ["1jan2015", 0],
+		"batch": ["day", 10000],
+		"ids": "select last_modified, id from job where last_modified>'{{last.last_modified}}' or (last_modified>'{{last.last_modified}}' and id>={{last.id}}) order by last_modified, id limit 10001"
+	}
+
+* **`last`** - *string* - the name of the file to store the first record of the next batch
+* **`field`** - `strings` - Field to track between extracts; it should be a timestamp, or constantly increasing value, that can help find all changes since the last run. This extract program will record the maximum value seen to the file system so subsequent runs can continue where it left off.
+* **`type`** - `strings` - The type of field (either `time` or `number`)
+* **`start`** - `strings` - The minimum value for the field expected. Used to start a new extract, and used to know what value to assign to zero
+* **`batch`** - `strings` - size of the batch. For `time` this can be a duration.
+* **`ids`** - `strings` - An important piece of SQL that will produce the set of keys to extract from the fact table.  This allows you to specify any query that can leverage indexes to increase performance. You can use the properties of the `last` document.
+
+###Destination
+
+Where the batches of documents are placed. 
 
 
-### Treeherder Example 
+`destination` can be a file name instead of a S3 configuration object (see `tests/resources/config` for examples).
 
-The extract for the Treeherder database is interested in the `job` facts. For this example, I added some missing relations for `performance_datum`, despite the fact it's being excluded.  There is also a missing relation for the `option_collection`.   
+	"destination": {
+		"bucket": "active-data-treeherder-jobs",
+		"public": true,
+		"key_format": "a.b",
+		"$ref": "file://~/private.json#aws_credentials"
+	}
 
-There are many performance `exclude` entries; this is because the Perfherder database is in the same schema; it was convenient to leverage all Treeherder lookup tables. 
+* **`bucket`** - *string* - name of the bucket 
+* **`public`** - *boolean* - if the files in bucket will be made public (default `false`)
+* **`key_format`** - *string* - a dot-delimited example key. The length of the path must equal the number of field names used in the `extract.field` 
+* **`aws_access_key_id`** - *string* - AWS connection info
+* **`aws_secret_access_key`** - *string* - AWS connection info 
+* **`region`** - *string* - AWS region 
 
-	{
+###Snowflake
+
+The `snowflake` object limits the relational walk used to determine the JSON document shape. Without adding limits, all unique relation paths will be traversed, resulting in large, and possibly redundant, documents. You can `exclude` tables entirely, or declare some tables are good for `reference_only`.  
+
+	"snowflake": {
 		"fact_table": "job",
-		"prime_field": "last_modified",
 		"show_foreign_keys": false,
-		"null_values": ["-", "unknown", ""],
-		"ids": "select id from (select last_modified, id from job order by id desc limit 1000000) a order by id desc limit 10",
-		"add_relations":[
-			"treeherder.performance_datum.ds_job_id -> treeherder.job.project_specific_id",
-			"treeherder.performance_datum.repository_id -> treeherder.job.repository_id",
+		"null_values": [
+			"-",
+			"unknown",
+			""
+		],
+		"add_relations": [
 			"treeherder.job.option_collection_hash -> treeherder.option_collection.option_collection_hash"
 		],
 		"include": [
@@ -56,7 +82,6 @@ There are many performance `exclude` entries; this is because the Perfherder dat
 			"auth_user",
 			"job_log",
 			"text_log_step",
-			"commit",
 			"performance_datum",
 			"performance_alert_summary",
 			"performance_signature"
@@ -65,22 +90,27 @@ There are many performance `exclude` entries; this is because the Perfherder dat
 			"user.email",
 			"repository.name",
 			"machine_platform.platform",
-			"failure_classification.name"
+			"failure_classification.name",
+			"option.name"
 		],
 		"database": {
 			"schema": "treeherder",
 			"username": "activedata",
-			"$ref":"~/private.json#treeherder"
-		},
-		"debug":{
-			"trace":true
+			"$ref": "~/private.json#treeherder"
 		}
-	}
+
+* **`fact_table`** - *required* - name of the table that represents the facts being pulled. **MySQL-to-S3** can generate nested documents, so you need not choose the finest grain if you are fine with large documents.  For Treeherder, we are interested in the `job` facts.
+* **`show_foreign_keys`** - *default true* - Include the foreign key ids. This is useful if you require those ids for later synchronization. If you are only interested in the relationships, then they can be left out, and the JSON will be simpler.
+* **`null_values`** - Some databases use a variety of values that indicate *no value*. The database `NULL` is always considered missing, and these values are mapped to `NULL` too.
+* **`add_relations`** -  Relations are important for the denormalization. If your database is missing relations, you can add them here. They must be in `<schema>.<table>.<column> form; most missing relations cross schema boundaries.  **MySQL-to-S3** can reach across those boundaries for complete denormalization.
+* **`exclude`** - Some tables are not needed: They may be irrelevant for the extraction process, or they may contain sensitive information, or you may not have permissions to access the contents. In all these cases, the tables can be added to this list. For the Treeherder example, there are many `exclude` entries; this is to avoid pulling the Perfherder facts, which we pull using separate configuration.
+* **`reference_only`** - Tables can be used to lookup primitive values, or you are not interested in the full expressions of row in a table. In these cases you probably want the uid replaced with the canonical value that uid represents.  For example `user_id` refers to the `users` table, which has a `email` column. Every `user_id` column, can be represented with a `users` property having the `email` value. This effectively removes the relational ids and simplifies the JSON.  If just the table is named, then it is included, but no nested documents will be attached.   
+* **`database`** - required properties to connect to the database. Must include `schema` so that the `fact_table` name has context.
 	
 	
 ### Using Trace 
 
-During a run, the "trace" will show all paths being traversed.  In this run I did not include all the `exclude`, and you can see the resulting pathology: The `push` table is used by both the `job` fact table, and the `performance_alert_summary` table; the foreign keys provide a path `job.push.performance_alert_summary`.  If you want every push to include all the alert summaries that are related, you can certainly keep them, but for this scenario, it is too deep; much better to extract the `performance_alert_summary` separately.  For this reason we exclude the `performance*` tables.
+During a run, the "trace" will show all paths being traversed.  In this run I did not include all the `exclude`, and you can see the resulting pathology: The `push` table is used by both the `job` fact table, and the `performance_alert_summary` table; the foreign keys provide a path from `job` to `push.performance_alert_summary`.  If you want every push to include all the alert summaries that are related, you can certainly keep them, but for this scenario, it is too deep; much better to extract the `performance_alert_summary` separately.  For this reason we exclude the `performance*` tables.
 
 	Trace .
 	Trace job
