@@ -175,7 +175,7 @@ class Extract(object):
 
         file_name = self._get_s3_name(self.first_key)
 
-        with closing(cursor):
+        with closing(self.db.db):
             count, first, next = self.construct_docs(cursor, append)
 
         if not first:
@@ -185,9 +185,11 @@ class Extract(object):
         with Timer("write to destination"):
             if self.bucket:
                 destination = self.bucket.get_key(file_name, must_exist=False)
+                destination.write_lines(output)
             else:
-                destination = File(self.settings.destination)
-            destination.write_lines(output)
+                destination = File(self.settings.destination).delete()
+                destination.append(convert.value2json([convert.json2value(o) for o in output], pretty=True))
+                return False
             output.delete()
 
         # SUCCESS!!
@@ -213,7 +215,6 @@ class Extract(object):
         the first document of the next batch
         """
         batch_size = self._extract.batch.last()
-        curr_record = Null
         null_values = set(self.settings.null_values) | {None}
         next = next_key = None
         first = self.first
@@ -222,6 +223,7 @@ class Extract(object):
         count = 0
         columns = tuple(wrap(c) for c in self.schema.columns)
         with Timer("Downloading from MySQL"):
+            curr_record = Null
             for row in cursor:
                 nested_path = []
                 next_record = None
@@ -232,11 +234,7 @@ class Extract(object):
                     if len(nested_path) < len(c.nested_path):
                         nested_path = unwrap(c.nested_path)
                         next_record = Data()
-                    if c.put != None:
-                        try:
-                            next_record[c.put] = value
-                        except Exception, e:
-                            Log.warning("should not happen", cause=e)
+                    next_record[c.put] = value
 
                 if len(nested_path) > 1:
                     path = nested_path[-2]

@@ -3,3 +3,4 @@
 *.pyc
 /output
 /*.tab
+/tests/output

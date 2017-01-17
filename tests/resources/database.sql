@@ -1,4 +1,3 @@
-DROP DATABASE IF EXISTS testing;
 CREATE DATABASE testing;
 USE testing;
 
@@ -75,3 +74,4 @@ insert into nested2 VALUES (1002, 100, 5.1, 3);
 insert into nested2 VALUES (1003, 101, 6.2, 1);
 insert into nested2 VALUES (1004, 102, 7.3, 3);
 
+commit;

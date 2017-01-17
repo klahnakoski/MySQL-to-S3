@@ -43,6 +43,7 @@ class SnowflakeSchema(object):
             Log.warning("no database", cause=e)
         with Timer("scan database", debug=DEBUG):
             self._scan_database()
+            self.db.close()
 
     def get_sql(self, get_ids):
         sql = self._compose_sql(get_ids)
@@ -51,8 +52,8 @@ class SnowflakeSchema(object):
         sort = []
         ordering = []
         for ci, c in enumerate(self.columns):
-            if c.column.is_id:
-                sort.append(c.column_alias + " IS NULL")
+            if c.sort:
+                sort.append(c.column_alias + " IS NOT NULL")
                 sort.append(c.column_alias)
                 ordering.append(ci)
 
@@ -203,15 +204,11 @@ class SnowflakeSchema(object):
                 information_schema.columns
         """, param=self.settings.database)
 
-        reference_only_tables = [r.split(".")[0] for r in self.settings.reference_only]
-        related_column_table_schema_triples = {
-            t
-            for r in relations
-            for t in [
-                (r.column.name, r.table.name, r.table.schema),
-                (r.referenced.column.name, r.referenced.table.name, r.referenced.table.schema)
-            ]
-        }
+        reference_only_tables = [r.split(".")[0] for r in self.settings.reference_only if len(r.split(".")) == 2]
+        reference_all_tables = [r.split(".")[0] for r in self.settings.reference_only if len(r.split(".")) == 1]
+        foreign_column_table_schema_triples = {(r.column.name, r.table.name, r.table.schema) for r in relations}
+        referenced_column_table_schema_triples = {(r.referenced.column.name, r.referenced.table.name, r.referenced.table.schema) for r in relations}
+        related_column_table_schema_triples = foreign_column_table_schema_triples | referenced_column_table_schema_triples
 
         columns = UniqueIndex(["column.name", "table.name", "table.schema"])
         for c in raw_columns:
@@ -219,21 +216,45 @@ class SnowflakeSchema(object):
                 if c.table_name + "." + c.column_name in self.settings.reference_only:
                     include = True
                     reference = True
+                    foreign = False
                 elif c.column_name in tables[(c.table_name, c.table_schema)].id:
                     include = self.settings.show_foreign_keys
                     reference = False
+                    foreign = False
                 else:
                     include = False
                     reference = False
+                    foreign = False
+            elif c.table_name in reference_all_tables:
+                # TABLES USED FOR REFERENCE, NO NESTED DOCUMENTS EXPECTED
+                if c.column_name in tables[(c.table_name, c.table_schema)].id:
+                    include = self.settings.show_foreign_keys
+                    reference = True
+                    foreign = False
+                elif (c.column_name, c.table_name, c.table_schema) in foreign_column_table_schema_triples:
+                    include = False
+                    reference = False
+                    foreign = True
+                else:
+                    include = True
+                    reference = False
+                    foreign = False
             elif c.column_name in tables[(c.table_name, c.table_schema)].id:
                 include = self.settings.show_foreign_keys
                 reference = False
-            elif (c.column_name, c.table_name, c.table_schema) in related_column_table_schema_triples:
+                foreign = False
+            elif (c.column_name, c.table_name, c.table_schema) in foreign_column_table_schema_triples:
+                include = False
+                reference = False
+                foreign = True
+            elif (c.column_name, c.table_name, c.table_schema) in referenced_column_table_schema_triples:
                 include = self.settings.show_foreign_keys
                 reference = False
+                foreign = False
             else:
                 include = True
                 reference = False
+                foreign = False
 
             rel = {
                 "column": {
@@ -246,8 +267,9 @@ class SnowflakeSchema(object):
                 },
                 "ordinal_position": c.ordinal_position,
                 "is_id": c.column_name in tables[(c.table_name, c.table_schema)].id,
-                "include": include,
-                "reference": reference   # TRUE IF THIS COLUMN REPRESENTS THE ROW
+                "include": include,      # TRUE IF THIS COLUMN IS OUTPUTTED
+                "reference": reference,  # TRUE IF THIS COLUMN REPRESENTS THE ROW
+                "foreign": foreign       # TRUE IF THIS COLUMN POINTS TO ANOTHER ROW
             }
             columns.add(rel)
 
@@ -257,14 +279,16 @@ class SnowflakeSchema(object):
         nested_path_to_join = {}
         all_nested_paths = [["."]]
 
-        def follow_paths(position, path, nested_path, done_relations):
+        def follow_paths(position, path, nested_path, done_relations, no_nested_docs):
             if position.name in self.settings.exclude:
                 return
             if DEBUG:
                 Log.note("Trace {{path}}", path=path)
-            if position.name!="__ids__":
+            if position.name != "__ids__":
                 self.db.query("SELECT * FROM "+self.db.quote_column(position.name, position.schema)+" LIMIT 1")
 
+            if position.name in reference_all_tables:
+                no_nested_docs = True
             if position.name in reference_only_tables:
                 return
 
@@ -307,7 +331,9 @@ class SnowflakeSchema(object):
                         name.append(a)
                 referenced_column_path = join_field(split_field(path) + ["/".join(name)])
                 col_pointer_name = relative_field(referenced_column_path, nested_path[0])
-
+# insert into nested1 VALUES (100, 10, 'aaa', -1);
+# id.about.time.nested1 .ref=10
+# id.about.time.nested1 .ref.name
                 for col in columns:
                     if col.table.name == constraint_columns[0].referenced.table.name and col.table.schema == constraint_columns[0].referenced.table.schema:
                         col_full_name = concat_field(col_pointer_name, literal_field(col.column.name))
@@ -319,6 +345,7 @@ class SnowflakeSchema(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
+                                "sort": True,
                                 "path": referenced_column_path,
                                 "nested_path": nested_path,
                                 "put": col_full_name
@@ -329,6 +356,7 @@ class SnowflakeSchema(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
+                                "sort": False,
                                 "path": referenced_column_path,
                                 "nested_path": nested_path,
                                 "put": col_full_name if self.settings.show_foreign_keys else None
@@ -339,6 +367,7 @@ class SnowflakeSchema(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
+                                "sort": False,
                                 "path": referenced_column_path,
                                 "nested_path": nested_path,
                                 "put": col_full_name if self.settings.show_foreign_keys else None
@@ -349,6 +378,7 @@ class SnowflakeSchema(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
+                                "sort": False,
                                 "path": referenced_column_path,
                                 "nested_path": nested_path,
                                 "put": col_pointer_name if not self.settings.show_foreign_keys else col_full_name  # REFERENCE FIELDS CAN REPLACE THE WHOLE OBJECT BEING REFERENCED
@@ -359,6 +389,7 @@ class SnowflakeSchema(object):
                                 "table_alias": alias,
                                 "column_alias": "c"+unicode(c_index),
                                 "column": col,
+                                "sort": False,
                                 "path": referenced_column_path,
                                 "nested_path": nested_path,
                                 "put": col_full_name
@@ -371,82 +402,88 @@ class SnowflakeSchema(object):
                     position=copy(constraint_columns[0].referenced.table),
                     path=referenced_column_path,
                     nested_path=nested_path,
-                    done_relations=copy(done_relations)
+                    done_relations=copy(done_relations),
+                    no_nested_docs=no_nested_docs
                 ))
 
             # NESTED OBJECTS
-            for g, constraint_columns in jx.groupby(jx.filter(relations, {"eq": {"referenced.table.name": position.name, "referenced.table.schema": position.schema}}), "constraint.name"):
-                g = unwrap(g)
-                constraint_columns = deepcopy(constraint_columns)
-                if g["constraint.name"] in done_relations:
-                    continue
-                done_relations.add(g["constraint.name"])
+            if not no_nested_docs:
+                for g, constraint_columns in jx.groupby(jx.filter(relations, {"eq": {"referenced.table.name": position.name, "referenced.table.schema": position.schema}}), "constraint.name"):
+                    g = unwrap(g)
+                    constraint_columns = deepcopy(constraint_columns)
+                    if g["constraint.name"] in done_relations:
+                        continue
+                    done_relations.add(g["constraint.name"])
 
-                many_table = set(constraint_columns.table.name)
-                if not (many_table - self.settings.exclude):
-                    continue
+                    many_table = set(constraint_columns.table.name)
+                    if not (many_table - self.settings.exclude):
+                        continue
 
-                referenced_column_path = join_field(split_field(path) + ["/".join(many_table)])
-                new_nested_path = [referenced_column_path] + nested_path
-                all_nested_paths.append(new_nested_path)
+                    referenced_column_path = join_field(split_field(path) + ["/".join(many_table)])
+                    new_nested_path = [referenced_column_path] + nested_path
+                    all_nested_paths.append(new_nested_path)
 
-                # if new_path not in self.settings.include:
-                #     Log.note("Exclude nested path {{path}}", path=new_path)
-                #     continue
-                one_to_many_joins = nested_path_to_join[referenced_column_path] = copy(curr_join_list)
-                index = len(one_to_many_joins)
-                alias = "t"+unicode(index)
-                for c in constraint_columns:
-                    c.table.alias = alias
-                    c.referenced.table = position
-                one_to_many_joins.append(set_default({}, g, {
-                    "children": True,
-                    "join_columns": constraint_columns,
-                    "path": path,
-                    "nested_path": nested_path
-                }))
+                    # if new_path not in self.settings.include:
+                    #     Log.note("Exclude nested path {{path}}", path=new_path)
+                    #     continue
+                    one_to_many_joins = nested_path_to_join[referenced_column_path] = copy(curr_join_list)
+                    index = len(one_to_many_joins)
+                    alias = "t"+unicode(index)
+                    for c in constraint_columns:
+                        c.table.alias = alias
+                        c.referenced.table = position
+                    one_to_many_joins.append(set_default({}, g, {
+                        "children": True,
+                        "join_columns": constraint_columns,
+                        "path": path,
+                        "nested_path": nested_path
+                    }))
+# insert into nested1 VALUES (100, 10, 'aaa', -1); # id.about.time.nested1 .ref=10# id.about.time.nested1 .ref.name
+                    for col in columns:
+                        if col.table.name == constraint_columns[0].table.name and col.table.schema == constraint_columns[0].table.schema:
+                            col_full_name = join_field(split_field(referenced_column_path)[len(split_field(new_nested_path[0])):]+[literal_field(col.column.name)])
 
-                for col in columns:
-                    if col.table.name == constraint_columns[0].table.name and col.table.schema == constraint_columns[0].table.schema:
-                        col_full_name = join_field(split_field(referenced_column_path)[len(split_field(new_nested_path[0])):]+[literal_field(col.column.name)])
+                            if col.column.name == constraint_columns[0].column.name:
+                                c_index = len(output_columns)
+                                output_columns.append({
+                                    "table_alias": alias,
+                                    "column_alias": "c"+unicode(c_index),
+                                    "column": col,
+                                    "sort": col.is_id,
+                                    "path": referenced_column_path,
+                                    "nested_path": new_nested_path,
+                                    "put": col_full_name if self.settings.show_foreign_keys else None
+                                })
+                            elif col.is_id:
+                                c_index = len(output_columns)
+                                output_columns.append({
+                                    "table_alias": alias,
+                                    "column_alias": "c"+unicode(c_index),
+                                    "column": col,
+                                    "sort": col.is_id,
+                                    "path": referenced_column_path,
+                                    "nested_path": new_nested_path,
+                                    "put": col_full_name if self.settings.show_foreign_keys else None
+                                })
+                            else:
+                                c_index = len(output_columns)
+                                output_columns.append({
+                                    "table_alias": alias,
+                                    "column_alias": "c"+unicode(c_index),
+                                    "column": col,
+                                    "sort": col.is_id,
+                                    "path": referenced_column_path,
+                                    "nested_path": new_nested_path,
+                                    "put": col_full_name if col.include else None
+                                })
 
-                        if col.column.name == constraint_columns[0].column.name:
-                            c_index = len(output_columns)
-                            output_columns.append({
-                                "table_alias": alias,
-                                "column_alias": "c"+unicode(c_index),
-                                "column": col,
-                                "path": referenced_column_path,
-                                "nested_path": new_nested_path,
-                                "put": col_full_name if self.settings.show_foreign_keys else None
-                            })
-                        elif col.is_id:
-                            c_index = len(output_columns)
-                            output_columns.append({
-                                "table_alias": alias,
-                                "column_alias": "c"+unicode(c_index),
-                                "column": col,
-                                "path": referenced_column_path,
-                                "nested_path": new_nested_path,
-                                "put": col_full_name if self.settings.show_foreign_keys else None
-                            })
-                        else:
-                            c_index = len(output_columns)
-                            output_columns.append({
-                                "table_alias": alias,
-                                "column_alias": "c"+unicode(c_index),
-                                "column": col,
-                                "path": referenced_column_path,
-                                "nested_path": new_nested_path,
-                                "put": col_full_name
-                            })
-
-                todo.append(Data(
-                    position=constraint_columns[0].table,
-                    path=referenced_column_path,
-                    nested_path=new_nested_path,
-                    done_relations=copy(done_relations)
-                ))
+                    todo.append(Data(
+                        position=constraint_columns[0].table,
+                        path=referenced_column_path,
+                        nested_path=new_nested_path,
+                        done_relations=copy(done_relations),
+                        no_nested_docs=no_nested_docs
+                    ))
 
         path = "."
         nested_path = [path]
@@ -460,7 +497,8 @@ class SnowflakeSchema(object):
             position=ids_table,
             path=path,
             nested_path=nested_path,
-            done_relations=set()
+            done_relations=set(),
+            no_nested_docs=False
         ))
 
         while todo:

@@ -96,6 +96,7 @@ class Queue(object):
         with self.lock:
             if value is Thread.STOP:
                 # INSIDE THE lock SO THAT EXITING WILL RELEASE wait()
+                self.queue.append(value)
                 self.keep_running = False
                 return
 
