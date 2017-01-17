@@ -96,6 +96,12 @@ class Extract(object):
         else:
             self.last_batch = 0
 
+    def close(self):
+        try:
+            self.db.close()
+        except Exception:
+            pass
+
     def _get_key(self, r):
         output = tuple(
             Date(r[k]) if t == "time" else r[k]
@@ -175,7 +181,7 @@ class Extract(object):
 
         file_name = self._get_s3_name(self.first_key)
 
-        with closing(self.db.db):
+        with closing(cursor):
             count, first, next = self.construct_docs(cursor, append)
 
         if not first:
@@ -298,9 +304,9 @@ def main():
         Log.start(settings.debug)
 
         def extract(please_stop):
-            e = Extract(settings)
-            while e.extract() and not please_stop:
-                pass
+            with closing(Extract(settings)) as e:
+                while e.extract() and not please_stop:
+                    pass
 
         e = Thread.run("extracting", extract)
         please_stop = Signal()

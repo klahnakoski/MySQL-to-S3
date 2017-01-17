@@ -51,6 +51,9 @@
 			"$ref": "~/private.json#treeherder"
 		}
 	},
+	"constants":{
+		"mysql_to_s3.snowflake_schema.DEBUG": true
+	},
 	"debug":{
 		"trace":true,
 		"cprofile":false
