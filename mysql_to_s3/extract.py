@@ -20,7 +20,7 @@ from MoLogs.strings import expand_template
 from mysql_to_s3 import lt
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
 from pyDots import coalesce, Data, wrap, Null, listwrap, unwrap, relative_field
-from pyLibrary import convert
+from pyLibrary import convert, jsons
 from pyLibrary.aws import s3
 from pyLibrary.env.files import File
 from pyLibrary.env.git import get_git_revision
@@ -163,7 +163,7 @@ class Extract(object):
             etl = self._get_etl(self._get_key(value))
 
             output.append(convert.value2json({
-                fact_table: value,
+                fact_table: jsons.scrub(value),
                 "etl": {
                     "id": i,
                     "source": etl,
@@ -183,14 +183,16 @@ class Extract(object):
 
         # WRITE TO S3
         with Timer("write to destination"):
-            if self.bucket:
-                destination = self.bucket.get_key(file_name, must_exist=False)
-                destination.write_lines(output)
-            else:
-                destination = File(self.settings.destination).delete()
-                destination.append(convert.value2json([convert.json2value(o) for o in output], pretty=True))
-                return False
-            output.delete()
+            try:
+                if self.bucket:
+                    destination = self.bucket.get_key(file_name, must_exist=False)
+                    destination.write_lines(output)
+                else:
+                    destination = File(self.settings.destination)
+                    destination.write(convert.value2json([convert.json2value(o) for o in output], pretty=True))
+                    return False
+            finally:
+                output.delete()
 
         # SUCCESS!!
         if not next:

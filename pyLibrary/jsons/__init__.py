@@ -156,6 +156,11 @@ def _scrub(value, is_done):
         is_done.discard(_id)
         return output
     elif type_ in (tuple, list, FlatList):
+        if len(value) == 0:
+            return None
+        elif len(value) == 1:
+            return _scrub(value[0], is_done)
+
         output = []
         for v in value:
             v = _scrub(v, is_done)
