@@ -2,3 +2,6 @@
 *.iml
 *.pyc
 /output
+/*.tab
+/tests/output
+/tests/resources/output

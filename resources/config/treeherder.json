@@ -1,45 +1,61 @@
 {
-	"fact_table": "job",
-	"show_foreign_keys": false,
-	"null_values": ["-", "unknown", ""],
-	"ids": "select id from (select last_modified, id from job order by id desc limit 1000000) a order by id desc limit 10",
-	"add_relations":[
-		"treeherder.performance_datum.ds_job_id -> treeherder.job.project_specific_id",
-		"treeherder.performance_datum.repository_id -> treeherder.job.repository_id"
-
-
-//		"treeherder.job_note.job_id -> mozilla_inbound.job.id",
-//		"treeherder.bug_job_map.job_id -> mozilla_inbound.job.id",
-//		"mozilla_inbound.job.build_platform_id -> treeherder.build_platform.id",
-//		"mozilla_inbound.job.machine_id -> treeherder.machine.id",
-//		"mozilla_inbound.job.option_collection_hash -> treeherder.option_collection.option_collection_hash",
-//		"mozilla_inbound.job.job_type_id -> treeherder.job_type.id",
-//		"mozilla_inbound.job.product_id -> treeherder.product.id",
-//		"mozilla_inbound.job.failure_classification_id -> treeherder.failure_classification.id"
-	],
-	"include": [
-	],
-	"exclude": [
-		"runnable_job",
-		"auth_user",
-		"job_log",
-		"text_log_step",
-		"commit",
-		"performance_datum",
-		"performance_alert_summary"
-	],
-	"reference_only": [
-		"user.email",
-		"repository.name",
-		"machine_platform.platform",
-		"failure_classification.name"
-	],
-	"database": {
-		"schema": "treeherder",
-		"username": "activedata",
-		"$ref":"~/private.json#treeherder"
+	"extract": {
+		"threads": 2,
+		"last": "output/treeherder_last_run.json",
+		"field": ["last_modified", "id"],
+		"type": ["time", "number"],
+		"start": ["1jan2015", 0],
+		"batch": ["day", 1000]
+	},
+	"destination": {
+		"bucket": "active-data-treeherder-jobs",
+		"public": true,
+		"key_format": "a.b",
+		"$ref": "file://~/private.json#aws_credentials"
+	},
+	"snowflake": {
+		"fact_table": "job",
+		"show_foreign_keys": false,
+		"null_values": [
+			"-",
+			"unknown",
+			""
+		],
+		"add_relations": [
+			"treeherder.performance_datum.ds_job_id -> treeherder.job.project_specific_id",
+			"treeherder.performance_datum.repository_id -> treeherder.job.repository_id",
+			"treeherder.job.option_collection_hash -> treeherder.option_collection.option_collection_hash"
+		],
+		"include": [
+		],
+		"exclude": [
+			"runnable_job",
+			"auth_user",
+			"job_log",
+			"text_log_step",
+			"commit",
+			"performance_datum",
+			"performance_alert_summary",
+			"performance_signature"
+		],
+		"reference_only": [
+			"user.email",
+			"repository.name",
+			"machine_platform.platform",
+			"failure_classification.name",
+			"option.name"
+		],
+		"database": {
+			"schema": "treeherder",
+			"username": "activedata",
+			"$ref": "~/private.json#treeherder"
+		}
+	},
+	"constants":{
+		"mysql_to_s3.snowflake_schema.DEBUG": false
 	},
 	"debug":{
-		"trace":true
+		"trace":true,
+		"cprofile":false
 	}
 }
