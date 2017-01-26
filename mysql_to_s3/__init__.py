@@ -75,6 +75,8 @@ def lt(l, r):
     :param r: right key
     :return: True if l<r
     """
+    if r is None or l is None:
+        return True
     for ll, rr in zip(l, r):
         if ll < rr:
             return True
