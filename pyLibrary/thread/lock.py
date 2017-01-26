@@ -68,6 +68,8 @@ class Lock(object):
 
     def __exit__(self, a, b, c):
         if self.waiting:
+            if DEBUG:
+                _Log.note("[{{name}}] releasing a thread", name=self.name)
             waiter = self.waiting.pop()
             waiter.go()
         self.lock.release()
@@ -81,7 +83,7 @@ class Lock(object):
         waiter = Signal()
         if self.waiting:
             if DEBUG:
-                _Log.note("{{name}} waiting with others", name=self.name)
+                _Log.note("[{{name}}] waiting with others", name=self.name)
             self.waiting.insert(0, waiter)
         else:
             self.waiting = [waiter]
@@ -90,8 +92,13 @@ class Lock(object):
             self.lock.release()
             (waiter | till).wait()
             if DEBUG:
-                trace = _extract_stack(0)[2]
-                _Log.note("{{name|quote}} out of lock waiting till {{till|quote}}\n{{trace}} ", till=till.name if till else "", name=self.name, trace=trace)
+                # trace = _extract_stack(0)[1]
+                _Log.note(
+                    "[{{name}}] out of lock waiting till {{till|quote}}",
+                    till=till.name if till else "",
+                    name=self.name
+                    # trace=trace
+                )
         except Exception, e:
             if not _Log:
                 _late_import()
@@ -99,12 +106,12 @@ class Lock(object):
         finally:
             self.lock.acquire()
             if DEBUG:
-                _Log.note("{{name}} acquired old lock", name=self.name)
+                _Log.note("[{{name}}] done wait, acquired old lock", name=self.name)
 
         try:
             self.waiting.remove(waiter)
             if DEBUG:
-                _Log.note("{{name}} removed own signal", name=self.name)
+                _Log.note("[{{name}}] removed own signal", name=self.name)
         except Exception:
             pass
 

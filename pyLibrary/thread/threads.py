@@ -163,7 +163,7 @@ class Queue(object):
 
         now = Date.now()
         if timeout != None:
-            time_to_stop_waiting = now + timeout
+            time_to_stop_waiting = Till(now + timeout)
         else:
             time_to_stop_waiting = None
 
@@ -171,13 +171,13 @@ class Queue(object):
             self.next_warning = now + wait_time
 
         while self.keep_running and len(self.queue) >= self.max:
-            if now > time_to_stop_waiting:
+            if time_to_stop_waiting:
                 if not _Log:
                     _late_import()
                 _Log.error(Thread.TIMEOUT)
 
             if self.silent:
-                self.lock.wait(Till(till=time_to_stop_waiting))
+                self.lock.wait(time_to_stop_waiting)
             else:
                 self.lock.wait(Till(timeout=wait_time))
                 if len(self.queue) > self.max:
