@@ -15,41 +15,40 @@ from __future__ import unicode_literals
 from contextlib import closing
 from tempfile import NamedTemporaryFile
 
-from MoLogs import Log, startup, constants, machine_metadata
+from mo_files import File
+from mo_kwargs import override
+from mo_logs import Log, startup, constants, machine_metadata
+from mo_threads import Signal, Thread, Queue, THREAD_STOP
+from mo_times import Date, Duration
+from mo_times.timer import Timer
+
+from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
-from pyDots import Data, wrap, Null, listwrap, unwrap, relative_field
 from pyLibrary import convert
 from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
-from pyLibrary.env.files import File
 from pyLibrary.env.git import get_git_revision
-from pyLibrary.meta import use_settings
 from pyLibrary.queries import jx
 from pyLibrary.sql import SQL
 from pyLibrary.sql.mysql import MySQL
-from pyLibrary.thread.signal import Signal
-from pyLibrary.thread.threads import Thread, Queue
-from pyLibrary.times.dates import Date
-from pyLibrary.times.durations import Duration
-from pyLibrary.times.timer import Timer
 
 DEBUG = True
 
 
 class Extract(object):
 
-    @use_settings
-    def __init__(self, settings=None):
-        self.settings = settings
+    @override
+    def __init__(self, kwargs=None):
+        self.settings = kwargs
         self.schema = SnowflakeSchema(self.settings.snowflake)
-        self._extract = extract = settings.extract
+        self._extract = extract = kwargs.extract
 
         # SOME PREP
         get_git_revision()
 
         # VERIFY WE DO NOT HAVE TOO MANY OTHER PROCESSES WORKING ON STUFF
-        with closing(MySQL(**settings.snowflake.database)) as db:
+        with closing(MySQL(**kwargs.snowflake.database)) as db:
             processes = None
             try:
                 processes = jx.filter(db.query("show processlist"), {"and": [{"neq": {"Command": "Sleep"}}, {"neq": {"Info": "show processlist"}}]})
@@ -73,39 +72,43 @@ class Extract(object):
             else:
                 Log.error('Expecting `extract.type` to be "number" or "time"')
 
-        self.queue = Queue("all batches", max=10, silent=True)
+        extract.threads = coalesce(extract.threads, 1)
+        self.done_pulling = Signal()
+        self.queue = Queue("all batches", max=2 * coalesce(extract.threads, 1), silent=True)
         Thread.run("get records", self.pull_all_remaining)
 
     def pull_all_remaining(self, please_stop):
-        counter = Counter(start=0)
-        for t, s, b in reversed(zip(self._extract.type, self._extract.start, self._extract.batch)):
-            if t == "time":
-                counter = DurationCounter(start=s, duration=b, child=counter)
-            else:
-                counter = BatchCounter(start=s, size=b, child=counter)
         try:
-            start_point, first_value = File(self.settings.extract.last).read_json()
-            start_point = tuple(start_point)
-        except Exception, _:
-            start_point = tuple(self._extract.start)
-            first_value = Null
-        counter.reset(start_point)
+            try:
+                start_point, first_value = File(self.settings.extract.last).read_json()
+                start_point = tuple(start_point)
+            except Exception, _:
+                start_point = tuple(self._extract.start)
+                first_value = Null
 
-        batch_size = self._extract.batch.last() * 10
-        with closing(MySQL(**self.settings.snowflake.database)) as db:
-            while not please_stop:
-                sql = self._build_list_sql(db, first_value, batch_size + 1)
-                with Timer("Grab a block of ids for processing"):
-                    with closing(MySQL(**self.settings.snowflake.database)) as db:
+            counter = Counter(start=0)
+            for t, s, b, f, i in reversed(zip(self._extract.type, self._extract.start, self._extract.batch, listwrap(first_value)+DUMMY_LIST, range(len(self._extract.start)))):
+                if t == "time":
+                    counter = DurationCounter(start=s, duration=b, child=counter)
+                    first_value[i] = Date(f)
+                else:
+                    counter = BatchCounter(start=s, size=b, child=counter)
+
+            batch_size = self._extract.batch.last() * 2 * self.settings.extract.threads
+            with closing(MySQL(**self.settings.snowflake.database)) as db:
+                while not please_stop:
+                    sql = self._build_list_sql(db, first_value, batch_size + 1)
+                    pending = []
+                    counter.reset(start_point)
+                    with Timer("Grab a block of ids for processing"):
                         with closing(db.db.cursor()) as cursor:
                             acc = []
                             cursor.execute(sql)
                             count = 0
-                            pending = []
-
                             for row in cursor:
+                                detail_key = counter.next(row)
+                                key = tuple(detail_key[:-1])
                                 count += 1
-                                key = tuple(counter.next(row)[:-1])
                                 if key != start_point:
                                     if first_value:
                                         if not acc:
@@ -115,23 +118,31 @@ class Extract(object):
                                     start_point = key
                                     first_value = row
                                 acc.append(row[-1])  # ASSUME LAST COLUMN IS THE FACT TABLE id
-                self.queue.extend(pending)
+                    Log.note("adding {{num}} for processing",  num=len(pending))
+                    self.queue.extend(pending)
 
-                if count < batch_size:
-                    self.queue.add(Thread.STOP)
-                    break
+                    if count < batch_size:
+                        self.queue.add(THREAD_STOP)
+                        break
+        except Exception, e:
+            Log.warning("Problem pulling data", cause=e)
+        finally:
+            self.done_pulling.go()
+            Log.note("pulling new data is done")
 
     def _build_list_sql(self, db, first, batch_size):
         # TODO: ENSURE THE LAST COLUMN IS THE id
-        where = "1=1"
         if first:
+            dim = len(self._extract.field)
             where = " OR ".join(
                 "(" + " AND ".join(
-                    db.quote_column(f) + (SQL("=") if e < i else SQL(">=")) + db.quote_value(v)
+                    db.quote_column(f) + ineq(i, e, dim) + db.quote_value(v)
                     for e, (f, v) in enumerate(zip(self._extract.field[0:i + 1:], first))
                 ) + ")"
-                for i in range(len(self._extract.field))
+                for i in range(dim)
             )
+        else:
+            where = "1=1"
 
         sql = (
             "SELECT " + ", ".join(db.quote_column(f) for f in self._extract.field) +
@@ -167,7 +178,7 @@ class Extract(object):
         extract = self.settings.extract
         fact_table = self.settings.snowflake.fact_table
 
-        output = File(NamedTemporaryFile(delete=False).name)
+        temp_file = File(NamedTemporaryFile(delete=False).name)
         parent_etl = None
         for s in reversed(start_point):
             parent_etl = {
@@ -180,7 +191,7 @@ class Extract(object):
             :param value: THE DOCUMENT TO ADD
             :return: PleaseStop
             """
-            output.append(convert.value2json({
+            temp_file.append(convert.value2json({
                 fact_table: elasticsearch.scrub(value),
                 "etl": {
                     "id": i,
@@ -200,13 +211,13 @@ class Extract(object):
             try:
                 if not isinstance(self.settings.destination, unicode):
                     destination = s3.Bucket(self.settings.destination).get_key(s3_file_name, must_exist=False)
-                    destination.write_lines(output)
+                    destination.write_lines(temp_file)
                 else:
                     destination = File(self.settings.destination)
-                    destination.write(convert.value2json([convert.json2value(o) for o in output], pretty=True))
+                    destination.write(convert.value2json([convert.json2value(o) for o in temp_file], pretty=True))
                     return False
             finally:
-                output.delete()
+                temp_file.delete()
 
         # SUCCESS!!
         File(extract.last).write(convert.value2json([start_point, first_value]))
@@ -278,31 +289,49 @@ class Extract(object):
 def main():
     try:
         settings = startup.read_settings()
-        constants.set(settings.constants)
-        Log.start(settings.debug)
+        with startup.SingleInstance(settings.args.filename):
+            constants.set(settings.constants)
+            Log.start(settings.debug)
 
-        extractor = Extract(settings)
+            extractor = Extract(settings)
 
-        def extract(please_stop):
-            with closing(MySQL(**settings.snowflake.database)) as db:
-                for kwargs in extractor.queue:
-                    if please_stop:
-                        break
-                    try:
-                        extractor.extract(db=db, please_stop=please_stop, **kwargs)
-                    except Exception, e:
-                        Log.warning("Could not extract", cause=e)
+            def extract(please_stop):
+                with closing(MySQL(**settings.snowflake.database)) as db:
+                    for kwargs in extractor.queue:
+                        if please_stop:
+                            break
+                        try:
+                            extractor.extract(db=db, please_stop=please_stop, **kwargs)
+                        except Exception, e:
+                            Log.warning("Could not extract", cause=e)
 
-        for i in range(settings.extract.threads):
-            Thread.run("extract #"+unicode(i), extract)
+            for i in range(settings.extract.threads):
+                Thread.run("extract #"+unicode(i), extract)
 
-        please_stop = Signal()
-        Thread.wait_for_shutdown_signal(please_stop=please_stop, allow_exit=True)
+            please_stop = Signal()
+            Thread.wait_for_shutdown_signal(please_stop=please_stop, allow_exit=True, wait_forever=False)
     except Exception, e:
         Log.error("Problem with data extraction", e)
     finally:
         Log.stop()
 
 
+EQ = SQL("=")
+GTE = SQL(">=")
+GT = SQL(">")
+DUMMY_LIST = [Null] * 5
+
+
+def ineq(i, e, dim):
+    if e < i:
+        return EQ
+    elif i == dim - 1:
+        return GTE
+    else:
+        return GT
+
+
 if __name__=="__main__":
     main()
+
+

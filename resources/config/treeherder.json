@@ -1,6 +1,6 @@
 {
 	"extract": {
-		"threads": 2,
+		"threads": 1,
 		"last": "output/treeherder_last_run.json",
 		"field": ["last_modified", "id"],
 		"type": ["time", "number"],
@@ -52,7 +52,8 @@
 		}
 	},
 	"constants":{
-		"mysql_to_s3.snowflake_schema.DEBUG": false
+		"mysql_to_s3.snowflake_schema.DEBUG": false,
+		"pyLibrary.sql.mysql.DEBUG": true
 	},
 	"debug":{
 		"trace":true,

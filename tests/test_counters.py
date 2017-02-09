@@ -15,8 +15,8 @@ from __future__ import unicode_literals
 from datetime import datetime
 
 from mysql_to_s3.counter import DurationCounter, BatchCounter, Counter
-from pyDots import Null
-from pyLibrary.testing.fuzzytestcase import FuzzyTestCase
+from mo_dots import Null
+from mo_testing.fuzzytestcase import FuzzyTestCase
 
 
 class TestCounters(FuzzyTestCase):

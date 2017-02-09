@@ -12,8 +12,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import unicode_literals
 
-from MoLogs import strings
-from pyDots import wrap
+from mo_dots import wrap
+from mo_logs import strings
+
 from pyLibrary.aws import s3
 
 
