@@ -15,7 +15,6 @@ from __future__ import unicode_literals
 from contextlib import closing
 from tempfile import NamedTemporaryFile
 
-from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
 from mo_files import File
 from mo_kwargs import override
 from mo_logs import Log, startup, constants, machine_metadata
@@ -23,6 +22,7 @@ from mo_threads import Signal, Thread, Queue, THREAD_STOP
 from mo_times import Date, Duration
 from mo_times.timer import Timer
 
+from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
 from pyLibrary import convert
@@ -87,7 +87,7 @@ class Extract(object):
                 first_value = Null
 
             counter = Counter(start=0)
-            for t, s, b, f, i in reversed(zip(self._extract.type, self._extract.start, self._extract.batch, first_value, range(len(first_value)))):
+            for t, s, b, f, i in reversed(zip(self._extract.type, self._extract.start, self._extract.batch, listwrap(first_value)+DUMMY_LIST, range(len(self._extract.start)))):
                 if t == "time":
                     counter = DurationCounter(start=s, duration=b, child=counter)
                     first_value[i] = Date(f)
@@ -289,26 +289,27 @@ class Extract(object):
 def main():
     try:
         settings = startup.read_settings()
-        constants.set(settings.constants)
-        Log.start(settings.debug)
+        with startup.SingleInstance(settings.args.filename):
+            constants.set(settings.constants)
+            Log.start(settings.debug)
 
-        extractor = Extract(settings)
+            extractor = Extract(settings)
 
-        def extract(please_stop):
-            with closing(MySQL(**settings.snowflake.database)) as db:
-                for kwargs in extractor.queue:
-                    if please_stop:
-                        break
-                    try:
-                        extractor.extract(db=db, please_stop=please_stop, **kwargs)
-                    except Exception, e:
-                        Log.warning("Could not extract", cause=e)
+            def extract(please_stop):
+                with closing(MySQL(**settings.snowflake.database)) as db:
+                    for kwargs in extractor.queue:
+                        if please_stop:
+                            break
+                        try:
+                            extractor.extract(db=db, please_stop=please_stop, **kwargs)
+                        except Exception, e:
+                            Log.warning("Could not extract", cause=e)
 
-        for i in range(settings.extract.threads):
-            Thread.run("extract #"+unicode(i), extract)
+            for i in range(settings.extract.threads):
+                Thread.run("extract #"+unicode(i), extract)
 
-        please_stop = Signal()
-        Thread.wait_for_shutdown_signal(please_stop=please_stop, allow_exit=True, wait_forever=False)
+            please_stop = Signal()
+            Thread.wait_for_shutdown_signal(please_stop=please_stop, allow_exit=True, wait_forever=False)
     except Exception, e:
         Log.error("Problem with data extraction", e)
     finally:
@@ -318,6 +319,7 @@ def main():
 EQ = SQL("=")
 GTE = SQL(">=")
 GT = SQL(">")
+DUMMY_LIST = [Null] * 5
 
 
 def ineq(i, e, dim):
