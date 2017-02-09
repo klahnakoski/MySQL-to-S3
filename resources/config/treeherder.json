@@ -2,10 +2,22 @@
 	"extract": {
 		"threads": 1,
 		"last": "output/treeherder_last_run.json",
-		"field": ["last_modified", "id"],
-		"type": ["time", "number"],
-		"start": ["1jan2015", 0],
-		"batch": ["day", 1000]
+		"field": [
+			"last_modified",
+			"id"
+		],
+		"type": [
+			"time",
+			"number"
+		],
+		"start": [
+			"1jan2015",
+			0
+		],
+		"batch": [
+			"day",
+			1000
+		]
 	},
 	"destination": {
 		"bucket": "active-data-treeherder-jobs",
@@ -51,12 +63,36 @@
 			"$ref": "~/private.json#treeherder"
 		}
 	},
-	"constants":{
+	"constants": {
 		"mysql_to_s3.snowflake_schema.DEBUG": false,
 		"pyLibrary.sql.mysql.DEBUG": true
 	},
-	"debug":{
-		"trace":true,
-		"cprofile":false
+	"debug": {
+		"trace": true,
+		"cprofile": {
+			"enabled": false,
+			"filename": "./results/profile.tab"
+		},
+		"log": [
+			{
+				"log_type": "console"
+			},
+			{
+				"class": "logging.handlers.RotatingFileHandler",
+				"filename": "logs/treeherder.log",
+				"maxBytes": 10000000,
+				"backupCount": 10,
+				"encoding": "utf8"
+			},
+			{
+				"log_type": "ses",
+				"max_interval": "5min",
+				"from_address": "klahnakoski@mozilla.com",
+				"to_address": "klahnakoski@mozilla.com",
+				"subject": "[ALERT][Manager] Problem with esShardBalancer",
+				"$ref": "file://~/private.json#aws_credentials"
+			}
+		]
 	}
+
 }
