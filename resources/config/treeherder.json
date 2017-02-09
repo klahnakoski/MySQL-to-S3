@@ -60,6 +60,9 @@
 		"database": {
 			"schema": "treeherder",
 			"username": "activedata",
+			"ssl": {
+				"ca": "./resources/certs/treeherder.pem"
+			},
 			"$ref": "~/private.json#treeherder"
 		}
 	},
