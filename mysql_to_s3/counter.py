@@ -12,10 +12,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import unicode_literals
 
-from MoLogs import Log
-from pyLibrary.maths import Math
-from pyLibrary.times.dates import Date
-from pyLibrary.times.durations import Duration
+from mo_logs import Log
+from mo_math import Math
+from mo_times import Date, Duration
 
 
 class Counter(object):

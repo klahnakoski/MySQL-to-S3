@@ -15,41 +15,40 @@ from __future__ import unicode_literals
 from contextlib import closing
 from tempfile import NamedTemporaryFile
 
-from MoLogs import Log, startup, constants, machine_metadata
+from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
+from mo_files import File
+from mo_kwargs import override
+from mo_logs import Log, startup, constants, machine_metadata
+from mo_threads import Signal, Thread, Queue, THREAD_STOP
+from mo_times import Date, Duration
+from mo_times.timer import Timer
+
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
-from pyDots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
 from pyLibrary import convert
 from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
-from pyLibrary.env.files import File
 from pyLibrary.env.git import get_git_revision
-from pyLibrary.meta import use_settings
 from pyLibrary.queries import jx
 from pyLibrary.sql import SQL
 from pyLibrary.sql.mysql import MySQL
-from pyLibrary.thread.signal import Signal
-from pyLibrary.thread.threads import Thread, Queue
-from pyLibrary.times.dates import Date
-from pyLibrary.times.durations import Duration
-from pyLibrary.times.timer import Timer
 
 DEBUG = True
 
 
 class Extract(object):
 
-    @use_settings
-    def __init__(self, settings=None):
-        self.settings = settings
+    @override
+    def __init__(self, kwargs=None):
+        self.settings = kwargs
         self.schema = SnowflakeSchema(self.settings.snowflake)
-        self._extract = extract = settings.extract
+        self._extract = extract = kwargs.extract
 
         # SOME PREP
         get_git_revision()
 
         # VERIFY WE DO NOT HAVE TOO MANY OTHER PROCESSES WORKING ON STUFF
-        with closing(MySQL(**settings.snowflake.database)) as db:
+        with closing(MySQL(**kwargs.snowflake.database)) as db:
             processes = None
             try:
                 processes = jx.filter(db.query("show processlist"), {"and": [{"neq": {"Command": "Sleep"}}, {"neq": {"Info": "show processlist"}}]})
@@ -80,48 +79,50 @@ class Extract(object):
 
     def pull_all_remaining(self, please_stop):
         try:
-            counter = Counter(start=0)
-            for t, s, b in reversed(zip(self._extract.type, self._extract.start, self._extract.batch)):
-                if t == "time":
-                    counter = DurationCounter(start=s, duration=b, child=counter)
-                else:
-                    counter = BatchCounter(start=s, size=b, child=counter)
             try:
                 start_point, first_value = File(self.settings.extract.last).read_json()
                 start_point = tuple(start_point)
             except Exception, _:
                 start_point = tuple(self._extract.start)
                 first_value = Null
-            counter.reset(start_point)
+
+            counter = Counter(start=0)
+            for t, s, b, f, i in reversed(zip(self._extract.type, self._extract.start, self._extract.batch, first_value, range(len(first_value)))):
+                if t == "time":
+                    counter = DurationCounter(start=s, duration=b, child=counter)
+                    first_value[i] = Date(f)
+                else:
+                    counter = BatchCounter(start=s, size=b, child=counter)
 
             batch_size = self._extract.batch.last() * 2 * self.settings.extract.threads
             with closing(MySQL(**self.settings.snowflake.database)) as db:
                 while not please_stop:
                     sql = self._build_list_sql(db, first_value, batch_size + 1)
+                    pending = []
+                    counter.reset(start_point)
                     with Timer("Grab a block of ids for processing"):
-                        with closing(MySQL(**self.settings.snowflake.database)) as db:
-                            with closing(db.db.cursor()) as cursor:
-                                acc = []
-                                cursor.execute(sql)
-                                count = 0
-                                pending = []
-
-                                for row in cursor:
-                                    count += 1
-                                    key = tuple(counter.next(row)[:-1])
-                                    if key != start_point:
-                                        if first_value:
-                                            if not acc:
-                                                Log.error("not expected")
-                                            pending.append({"start_point": start_point, "first_value": first_value, "data": acc})
-                                        acc = []
-                                        start_point = key
-                                        first_value = row
-                                    acc.append(row[-1])  # ASSUME LAST COLUMN IS THE FACT TABLE id
+                        with closing(db.db.cursor()) as cursor:
+                            acc = []
+                            cursor.execute(sql)
+                            count = 0
+                            for row in cursor:
+                                detail_key = counter.next(row)
+                                key = tuple(detail_key[:-1])
+                                count += 1
+                                if key != start_point:
+                                    if first_value:
+                                        if not acc:
+                                            Log.error("not expected")
+                                        pending.append({"start_point": start_point, "first_value": first_value, "data": acc})
+                                    acc = []
+                                    start_point = key
+                                    first_value = row
+                                acc.append(row[-1])  # ASSUME LAST COLUMN IS THE FACT TABLE id
+                    Log.note("adding {{num}} for processing",  num=len(pending))
                     self.queue.extend(pending)
 
                     if count < batch_size:
-                        self.queue.add(Thread.STOP)
+                        self.queue.add(THREAD_STOP)
                         break
         except Exception, e:
             Log.warning("Problem pulling data", cause=e)
@@ -131,15 +132,17 @@ class Extract(object):
 
     def _build_list_sql(self, db, first, batch_size):
         # TODO: ENSURE THE LAST COLUMN IS THE id
-        where = "1=1"
         if first:
+            dim = len(self._extract.field)
             where = " OR ".join(
                 "(" + " AND ".join(
-                    db.quote_column(f) + (SQL("=") if e < i else SQL(">=")) + db.quote_value(v)
+                    db.quote_column(f) + ineq(i, e, dim) + db.quote_value(v)
                     for e, (f, v) in enumerate(zip(self._extract.field[0:i + 1:], first))
                 ) + ")"
-                for i in range(len(self._extract.field))
+                for i in range(dim)
             )
+        else:
+            where = "1=1"
 
         sql = (
             "SELECT " + ", ".join(db.quote_column(f) for f in self._extract.field) +
@@ -312,5 +315,21 @@ def main():
         Log.stop()
 
 
+EQ = SQL("=")
+GTE = SQL(">=")
+GT = SQL(">")
+
+
+def ineq(i, e, dim):
+    if e < i:
+        return EQ
+    elif i == dim - 1:
+        return GTE
+    else:
+        return GT
+
+
 if __name__=="__main__":
     main()
+
+

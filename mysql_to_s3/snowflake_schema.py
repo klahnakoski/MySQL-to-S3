@@ -14,23 +14,24 @@ from __future__ import unicode_literals
 
 from copy import deepcopy, copy
 
-from MoLogs import Log, strings
-from pyDots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field
-from pyLibrary.maths.randoms import Random
-from pyLibrary.meta import use_settings
+from mo_kwargs import override
+from mo_logs import Log, strings
+from mo_dots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field
+from mo_math.randoms import Random
+
 from pyLibrary.queries import jx
-from pyLibrary.queries.unique_index import UniqueIndex
+from mo_collections import UniqueIndex
 from pyLibrary.sql.mysql import MySQL
-from pyLibrary.times.timer import Timer
+from mo_times.timer import Timer
 
 DEBUG = False
 
 
 class SnowflakeSchema(object):
 
-    @use_settings
-    def __init__(self, settings=None):
-        self.settings = settings
+    @override
+    def __init__(self, kwargs=None):
+        self.settings = kwargs
         self.settings.exclude = set(self.settings.exclude)
         self.settings.show_foreign_keys = coalesce(self.settings.show_foreign_keys, True)
 
@@ -38,7 +39,7 @@ class SnowflakeSchema(object):
         self.nested_path_to_join = None
         self.columns = None
         try:
-            self.db = MySQL(**settings.database)
+            self.db = MySQL(**kwargs.database)
         except Exception, e:
             Log.warning("no database", cause=e)
         with Timer("scan database", debug=DEBUG):
