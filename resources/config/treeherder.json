@@ -1,6 +1,6 @@
 {
 	"extract": {
-		"threads": 1,
+		"threads": 2,
 		"last": "output/treeherder_last_run.json",
 		"field": [
 			"last_modified",
