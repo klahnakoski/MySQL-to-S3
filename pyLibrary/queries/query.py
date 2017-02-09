@@ -14,15 +14,13 @@ from __future__ import unicode_literals
 from collections import Mapping
 from copy import copy
 
-from pyLibrary import convert
-from pyLibrary.collections import AND, UNION
-from MoLogs import Log
-from pyDots import coalesce, Null, set_default, unwraplist, literal_field
-from pyDots import wrap, unwrap, listwrap
-from pyDots import Data
-from pyDots.lists import FlatList
-from pyLibrary.maths import Math
-from pyLibrary.meta import use_settings
+from mo_logs import Log
+from mo_math import AND, UNION
+from mo_math import Math
+from mo_dots import Data
+from mo_dots import coalesce, Null, set_default, unwraplist, literal_field
+from mo_dots import wrap, unwrap, listwrap
+from mo_dots.lists import FlatList
 from pyLibrary.queries import Schema, wrap_from
 from pyLibrary.queries.containers import Container, STRUCT
 from pyLibrary.queries.dimensions import Dimension
@@ -204,6 +202,8 @@ class QueryOp(Expression):
         output.frum = wrap_from(query["from"], schema=schema)
         if not schema and isinstance(output.frum, Schema):
             schema = output.frum
+        if not schema and hasattr(output.frum, "schema"):
+            schema = output.frum.schema
 
         if query.select or isinstance(query.select, (Mapping, list)):
             output.select = _normalize_selects(query.select, query.frum, schema=schema)

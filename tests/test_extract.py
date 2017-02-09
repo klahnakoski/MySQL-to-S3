@@ -12,13 +12,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import unicode_literals
 
-from MoLogs import Log, startup, constants
+from mo_logs import Log, startup, constants
 from mysql_to_s3.extract import Extract
-from pyDots import set_default, wrap
-from pyLibrary.env.files import File
+from mo_dots import set_default, wrap
+from mo_files import File
 from pyLibrary.sql.mysql import MySQL
 from pyLibrary.testing.fuzzytestcase import FuzzyTestCase
-from pyLibrary.times.timer import Timer
+from mo_times.timer import Timer
 from pyLibrary import convert
 
 settings = startup.read_settings(filename="tests/resources/config/test.json")

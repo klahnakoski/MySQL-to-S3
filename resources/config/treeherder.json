@@ -52,7 +52,8 @@
 		}
 	},
 	"constants":{
-		"mysql_to_s3.snowflake_schema.DEBUG": false
+		"mysql_to_s3.snowflake_schema.DEBUG": false,
+		"pyLibrary.sql.mysql.DEBUG": true
 	},
 	"debug":{
 		"trace":true,
