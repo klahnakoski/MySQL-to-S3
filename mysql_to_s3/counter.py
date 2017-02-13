@@ -66,7 +66,7 @@ class DurationCounter(object):
 
     def next(self, value):
         v = Date(value[0])
-        if self.last_value > v:
+        if self.last_value.floor(self.duration) > v:
             Log.error("Expecting strictly increasing")
         self.last_value = v
 
