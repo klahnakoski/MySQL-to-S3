@@ -399,9 +399,9 @@ class MySQL(object):
             if len(sql) > 10000:
                 sql = "<" + unicode(len(sql)) + " bytes of sql>"
             Log.error("Unable to execute sql: return code {{return_code}}, {{output}}:\n {{sql}}\n",
-                sql= indent(sql),
-                return_code= proc.returncode,
-                output= output
+                sql=indent(sql),
+                return_code=proc.returncode,
+                output=output
             )
 
     @staticmethod

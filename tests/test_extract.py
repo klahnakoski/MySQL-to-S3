@@ -12,14 +12,14 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import unicode_literals
 
-from mo_logs import Log, startup, constants
-from mysql_to_s3.extract import Extract
-from mo_dots import set_default, wrap
 from mo_files import File
-from pyLibrary.sql.mysql import MySQL
-from pyLibrary.testing.fuzzytestcase import FuzzyTestCase
+from mo_logs import Log, startup, constants
+from mo_testing.fuzzytestcase import FuzzyTestCase
 from mo_times.timer import Timer
-from pyLibrary import convert
+
+from mo_dots import set_default, wrap, Null
+from mysql_to_s3.extract import Extract
+from pyLibrary.sql.mysql import MySQL
 
 settings = startup.read_settings(filename="tests/resources/config/test.json")
 constants.set(settings.constants)
@@ -31,21 +31,22 @@ class TestExtract(FuzzyTestCase):
         Log.start(settings.debug)
         with Timer("setup database"):
             try:
-                with MySQL(schema=None, settings=settings.database) as db:
+                with MySQL(schema=None, kwargs=settings.database) as db:
                     db.query("drop database testing")
             except Exception, e:
                 if "Can't drop database " in e:
                     pass
                 else:
                     Log.warning("problem removing db", cause=e)
-            MySQL.execute_file("tests/resources/database.sql", schema=None, settings=settings.database)
+            MySQL.execute_file("tests/resources/database.sql", schema=None, kwargs=settings.database)
 
     def setUp(self):
         pass
 
     def test_simple(self):
-        config = set_default({"extract": {"ids": "select 22 id"}}, config_template)
-        Extract(config).extract()
+        config = config_template
+        db = MySQL(**config.snowflake.database)
+        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=[22], please_stop=Null)
 
         result = File(filename).read_json()
         result[0].etl = None
@@ -54,8 +55,9 @@ class TestExtract(FuzzyTestCase):
         self.assertEqual(expected, result, "expecting identical")
 
     def test_complex(self):
-        config = set_default({"extract": {"ids": "select 10 id"}}, config_template)
-        Extract(config).extract()
+        config = config_template
+        db = MySQL(**config.snowflake.database)
+        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null)
 
         result = File(filename).read_json()
         result[0].etl = None
@@ -66,7 +68,6 @@ class TestExtract(FuzzyTestCase):
     def test_inline(self):
         config = set_default(
             {
-                "extract": {"ids": "select 10 id"},
                 "snowflake": {"reference_only": [
                     "inner1.value",
                     "inner2.value"
@@ -74,7 +75,8 @@ class TestExtract(FuzzyTestCase):
             },
             config_template
         )
-        Extract(config).extract()
+        db = MySQL(**config.snowflake.database)
+        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null)
 
         result = File(filename).read_json()
         result[0].etl = None
@@ -85,12 +87,12 @@ class TestExtract(FuzzyTestCase):
     def test_lean(self):
         config = set_default(
             {
-                "extract": {"ids": "select 10 id"},
                 "snowflake": {"show_foreign_keys": False}
             },
             config_template
         )
-        Extract(config).extract()
+        db = MySQL(**config.snowflake.database)
+        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null)
 
         result = File(filename).read_json()
         result[0].etl = None
@@ -101,7 +103,6 @@ class TestExtract(FuzzyTestCase):
     def test_lean_inline(self):
         config = set_default(
             {
-                "extract": {"ids": "select 10 id"},
                 "snowflake": {
                     "show_foreign_keys": False,
                     "reference_only": [
@@ -112,7 +113,8 @@ class TestExtract(FuzzyTestCase):
             },
             config_template
         )
-        Extract(config).extract()
+        db = MySQL(**config.snowflake.database)
+        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null)
 
         result = File(filename).read_json()
         result[0].etl = None
@@ -134,7 +136,9 @@ class TestExtract(FuzzyTestCase):
             },
             config_template
         )
-        Extract(config).extract()
+        db = MySQL(**config.snowflake.database)
+        data = [10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22]
+        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=data, please_stop=Null)
 
         result = File(filename).read_json()
         for r in result:

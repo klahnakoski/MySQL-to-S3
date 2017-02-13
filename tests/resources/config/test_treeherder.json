@@ -1,6 +1,23 @@
 {
 	"extract": {
-		"ids": "select last_modified, id from job where last_modified>'{{last.last_modified}}' or (last_modified='{{last.last_modified}}' and id>={{last.id}}) order by last_modified, id limit 101"
+		"threads": 2,
+		"last": "output/treeherder_last_run.json",
+		"field": [
+			"last_modified",
+			"id"
+		],
+		"type": [
+			"time",
+			"number"
+		],
+		"start": [
+			"1jan2015",
+			0
+		],
+		"batch": [
+			"day",
+			1000
+		]
 	},
 	"destination": "tests/output/test_treeherder_output.json",
 	"$ref":"../../../resources/config/treeherder.json",
