@@ -234,10 +234,11 @@ class Extract(object):
         null_values = set(self.settings.snowflake.null_values) | {None}
 
         count = 0
+        rownum = 0
         columns = tuple(wrap(c) for c in self.schema.columns)
         with Timer("Downloading from MySQL"):
             curr_record = Null
-            for row in cursor:
+            for rownum, row in enumerate(cursor):
                 if please_stop:
                     Log.error("Got `please_stop` signal")
 
@@ -283,7 +284,7 @@ class Extract(object):
                 append(curr_record["id"], count)
                 count += 1
 
-        Log.note("{{num}} records", num=count)
+        Log.note("{{num}} documents ({{rownum}} db records)", num=count, rownum=rownum)
 
 
 def main():

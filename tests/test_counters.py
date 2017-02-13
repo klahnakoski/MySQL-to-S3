@@ -129,7 +129,6 @@ class TestCounters(FuzzyTestCase):
 
             self.assertEqual(result, expecting, "Expecting counter")
 
-
     def test_day_3(self):
         data = [
             # (value, expected) PAIRS
@@ -174,5 +173,29 @@ class TestCounters(FuzzyTestCase):
 
         self.assertEqual(result, expecting, "Expecting counter")
 
+    def test_parts_of_day(self):
+        data = [
+            # (value, expected) PAIRS
+            (datetime(2017, 1, 1), [0, 0, 0]),
+            (datetime(2017, 1, 1), [0, 0, 1]),
+            (datetime(2017, 1, 1), [0, 0, 2]),
+            (datetime(2017, 1, 2, 0, 1, 1), [1, 0, 0]),
+            (datetime(2017, 1, 2), [1, 0, 1])
+        ]
+
+        c = DurationCounter(
+            start=datetime(2017, 1, 1),
+            duration="day",
+            child=BatchCounter(
+                start=0,
+                size=3,
+                child=Counter(0)
+            )
+        )
+
+        result = [c.next((d, Null)) for d, _ in data]
+        expecting = [e for _, e in data]
+
+        self.assertEqual(result, expecting, "Expecting counter")
 
 
