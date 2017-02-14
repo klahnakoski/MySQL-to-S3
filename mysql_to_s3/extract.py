@@ -185,6 +185,8 @@ class Extract(object):
                 "id": s,
                 "source": parent_etl
             }
+        parent_etl["revision"] = get_git_revision()
+        parent_etl["machine"] = machine_metadata
 
         def append(value, i):
             """
@@ -196,9 +198,7 @@ class Extract(object):
                 "etl": {
                     "id": i,
                     "source": parent_etl,
-                    "timestamp": Date.now(),
-                    "revision": get_git_revision(),
-                    "machine": machine_metadata
+                    "timestamp": Date.now()
                 }
             }))
         with Timer("assemble data"):

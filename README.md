@@ -117,7 +117,7 @@ To turn on the trace, you enable debugging by adding the following property to t
 		"mysql_to_s3.snowflake_schema.DEBUG": true
 	},
   
-During a run, the "trace" will show all paths being traversed. In the example below, I did not left out some  `exclude` tables, and you can see the resulting pathology: The `push` table is used by both the `job` fact table, and the `performance_alert_summary` table; the foreign keys provide a path from `job` to `push.performance_alert_summary`.  If you want every push to include all the alert summaries that are related, you can certainly keep them, but for this scenario, it is too deep; much better to extract the `performance_alert_summary` separately. For this reason we exclude the `performance*` tables.
+During a run, the "trace" will show all paths being traversed. In the example below, I left out some  `exclude` tables, and you can see the resulting pathology: The `push` table is used by both the `job` fact table, and the `performance_alert_summary` table; the foreign keys provide a path from `job` to `push.performance_alert_summary`.  If you want every push to include all the alert summaries that are related, you can certainly keep them, but for this scenario, it is too deep; much better to extract the `performance_alert_summary` separately. For this reason we exclude the `performance*` tables.
 
 
 	Trace .
