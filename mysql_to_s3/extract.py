@@ -180,7 +180,7 @@ class Extract(object):
 
         temp_file = File(NamedTemporaryFile(delete=False).name)
         parent_etl = None
-        for s in reversed(start_point):
+        for s in start_point:
             parent_etl = {
                 "id": s,
                 "source": parent_etl
