@@ -25,25 +25,24 @@ Each fact table is uses a configuration file to control the denormalization proc
 Controls the what records get pulled, the size of the batch, and how to name those batches
 
 	"extract": {
-		"last": "output/treeherder_last_run.json",
-		"field": ["last_modified", "id"],
-		"type": ["time", "number"],
-		"start": ["1jan2015", 0],
-		"batch": ["day", 10000],
-		"ids": "select last_modified, id from job where last_modified>'{{last.last_modified}}' or (last_modified>'{{last.last_modified}}' and id>={{last.id}}) order by last_modified, id limit 10001"
+		"threads":2,
+		"last":"output/treeherder_last_run.json",
+		"field":["last_modified","id"],
+		"type":["time","number"],
+		"start":["1jan2015",0],
+		"batch":["day",1000]
 	}
 
+* **`threads`** - *integer* - number of threads used to process documents. Use 1 if you are debugging.
 * **`last`** - *string* - the name of the file to store the first record of the next batch
 * **`field`** - `strings` - Field to track between extracts; it should be a timestamp, or constantly increasing value, that can help find all changes since the last run. This extract program will record the maximum value seen to the file system so subsequent runs can continue where it left off.
 * **`type`** - `strings` - The type of field (either `time` or `number`)
 * **`start`** - `strings` - The minimum value for the field expected. Used to start a new extract, and used to know what value to assign to zero
 * **`batch`** - `strings` - size of the batch. For `time` this can be a duration.
-* **`ids`** - `strings` - An important piece of SQL that will produce the set of keys to extract from the fact table.  This allows you to specify any query that can leverage indexes to increase performance. You can use the properties of the `last` document.
 
 ###Destination
 
 Where the batches of documents are placed. 
-
 
 `destination` can be a file name instead of a S3 configuration object (see `tests/resources/config` for examples).
 
