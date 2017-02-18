@@ -147,7 +147,7 @@ class Extract(object):
         selects = []
         for t, f in zip(self._extract.type, self._extract.field):
             if t == "time":
-                selects.append("UNIX_TIMESTAMP(" + db.quote_column(f) + ")")
+                selects.append("CAST(" + db.quote_column(f) + " as DATETIME(6))")
             else:
                 selects.append(db.quote_column(f))
         sql = (
