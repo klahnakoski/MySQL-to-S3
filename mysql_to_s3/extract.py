@@ -136,16 +136,22 @@ class Extract(object):
             dim = len(self._extract.field)
             where = " OR ".join(
                 "(" + " AND ".join(
-                    db.quote_column(f) + ineq(i, e, dim) + db.quote_value(v)
-                    for e, (f, v) in enumerate(zip(self._extract.field[0:i + 1:], first))
+                    db.quote_column(f) + ineq(i, e, dim) + db.quote_value(Date(v) if t=="time" else v)
+                    for e, (f, v, t) in enumerate(zip(self._extract.field[0:i + 1:], first, self._extract.type[0:i+1:]))
                 ) + ")"
                 for i in range(dim)
             )
         else:
             where = "1=1"
 
+        selects = []
+        for t, f in zip(self._extract.type, self._extract.field):
+            if t == "time":
+                selects.append("UNIX_TIMESTAMP(" + db.quote_column(f) + ")")
+            else:
+                selects.append(db.quote_column(f))
         sql = (
-            "SELECT " + ", ".join(db.quote_column(f) for f in self._extract.field) +
+            "SELECT " + ", ".join(selects) +
             "\nFROM " + self.settings.snowflake.fact_table +
             "\nWHERE " + where +
             "\nORDER BY " + ", ".join(db.quote_column(f) for f in self._extract.field) +
@@ -185,6 +191,8 @@ class Extract(object):
                 "id": s,
                 "source": parent_etl
             }
+        parent_etl["revision"] = get_git_revision()
+        parent_etl["machine"] = machine_metadata
 
         def append(value, i):
             """
@@ -196,9 +204,7 @@ class Extract(object):
                 "etl": {
                     "id": i,
                     "source": parent_etl,
-                    "timestamp": Date.now(),
-                    "revision": get_git_revision(),
-                    "machine": machine_metadata
+                    "timestamp": Date.now()
                 }
             }))
         with Timer("assemble data"):
