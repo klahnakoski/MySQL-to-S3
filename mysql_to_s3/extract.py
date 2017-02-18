@@ -136,8 +136,8 @@ class Extract(object):
             dim = len(self._extract.field)
             where = " OR ".join(
                 "(" + " AND ".join(
-                    db.quote_column(f) + ineq(i, e, dim) + db.quote_value(v)
-                    for e, (f, v) in enumerate(zip(self._extract.field[0:i + 1:], first))
+                    db.quote_column(f) + ineq(i, e, dim) + db.quote_value(Date(v) if t=="time" else v)
+                    for e, (f, v, t) in enumerate(zip(self._extract.field[0:i + 1:], first, self._extract.type[0:i+1:]))
                 ) + ")"
                 for i in range(dim)
             )
