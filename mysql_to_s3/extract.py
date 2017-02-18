@@ -311,6 +311,7 @@ def main():
                             extractor.extract(db=db, please_stop=please_stop, **kwargs)
                         except Exception, e:
                             Log.warning("Could not extract", cause=e)
+                            extractor.queue.add(kwargs)
 
             for i in range(settings.extract.threads):
                 Thread.run("extract #"+unicode(i), extract)
