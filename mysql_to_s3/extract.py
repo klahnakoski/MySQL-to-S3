@@ -144,8 +144,14 @@ class Extract(object):
         else:
             where = "1=1"
 
+        selects = []
+        for t, f in zip(self._extract.type, self._extract.field):
+            if t == "time":
+                selects.append("UNIX_TIMESTAMP(" + db.quote_column(f) + ")")
+            else:
+                selects.append(db.quote_column(f))
         sql = (
-            "SELECT " + ", ".join(db.quote_column(f) for f in self._extract.field) +
+            "SELECT " + ", ".join(selects) +
             "\nFROM " + self.settings.snowflake.fact_table +
             "\nWHERE " + where +
             "\nORDER BY " + ", ".join(db.quote_column(f) for f in self._extract.field) +
