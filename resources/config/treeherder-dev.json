@@ -1,6 +1,6 @@
 {
 	"extract": {
-		"threads": 2,
+		"threads": 1,
 		"last": "output/treeherder_last_run.json",
 		"field": [
 			"last_modified",
@@ -20,13 +20,13 @@
 		]
 	},
 	"destination": {
-		"bucket": "active-data-treeherder-jobs",
+		"bucket": "active-data-treeherder-jobs-dev",
 		"public": true,
 		"key_format": "a.b",
 		"$ref": "file://~/private.json#aws_credentials"
 	},
 	"notify": {
-		"name": "active-data-etl",
+		"name": "active-data-etl-dev",
 		"$ref": "file://~/private.json#aws_credentials"
 	},
 	"snowflake": {
