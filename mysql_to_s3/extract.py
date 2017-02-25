@@ -25,7 +25,7 @@ from mo_times.timer import Timer
 from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
-from pyLibrary import convert
+from pyLibrary import convert, aws
 from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_git_revision
@@ -75,6 +75,9 @@ class Extract(object):
         extract.threads = coalesce(extract.threads, 1)
         self.done_pulling = Signal()
         self.queue = Queue("all batches", max=2 * coalesce(extract.threads, 1), silent=True)
+
+        self.bucket = s3.Bucket(self.settings.destination)
+        self.notify = aws.Queue(self.settings.notify)
         Thread.run("get records", self.pull_all_remaining)
 
     def pull_all_remaining(self, please_stop):
@@ -216,7 +219,7 @@ class Extract(object):
         with Timer("write to destination"):
             try:
                 if not isinstance(self.settings.destination, unicode):
-                    destination = s3.Bucket(self.settings.destination).get_key(s3_file_name, must_exist=False)
+                    destination = self.bucket.get_key(s3_file_name, must_exist=False)
                     destination.write_lines(temp_file)
                 else:
                     destination = File(self.settings.destination)
@@ -225,8 +228,18 @@ class Extract(object):
             finally:
                 temp_file.delete()
 
+        # NOTIFY SQS
+        now=Date.now()
+        self.notify.add({
+            "bucket": self.settings.destination.bucket,
+            "key": s3_file_name,
+            "timestamp": now.unix,
+            "date/time": now.format()
+        })
+
         # SUCCESS!!
         File(extract.last).write(convert.value2json([start_point, first_value]))
+
 
     def construct_docs(self, cursor, append, please_stop):
         """
