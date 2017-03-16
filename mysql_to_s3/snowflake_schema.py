@@ -292,6 +292,7 @@ class SnowflakeSchema(object):
             if DEBUG:
                 Log.note("Trace {{path}}", path=path)
             if position.name != "__ids__":
+                # USED TO CONFIRM WE CAN ACCESS THE TABLE (WILL THROW ERROR WHEN IF IT FAILS)
                 self.db.query("SELECT * FROM "+self.db.quote_column(position.name, position.schema)+" LIMIT 1")
 
             if position.name in reference_all_tables:

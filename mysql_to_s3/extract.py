@@ -336,7 +336,7 @@ def main():
             please_stop = Signal()
             Thread.wait_for_shutdown_signal(please_stop=please_stop, allow_exit=True, wait_forever=False)
     except Exception, e:
-        Log.error("Problem with data extraction", e)
+        Log.warning("Problem with data extraction", e)
     finally:
         Log.stop()
 
