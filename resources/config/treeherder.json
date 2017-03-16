@@ -62,6 +62,7 @@
 			"option.name"
 		],
 		"database": {
+			"debug": false,
 			"schema": "treeherder",
 			"username": "activedata",
 			"ssl": {
@@ -71,8 +72,7 @@
 		}
 	},
 	"constants": {
-		"mysql_to_s3.snowflake_schema.DEBUG": false,
-		"pyLibrary.sql.mysql.DEBUG": true
+		"mysql_to_s3.snowflake_schema.DEBUG": true
 	},
 	"debug": {
 		"trace": true,

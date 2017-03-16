@@ -43,7 +43,10 @@ class SnowflakeSchema(object):
         except Exception, e:
             Log.warning("no database", cause=e)
         with Timer("scan database", debug=DEBUG):
-            self._scan_database()
+            try:
+                self._scan_database()
+            except Exception as e:
+                Log.warning("problem in database scanner", cause=e)
             self.db.close()
 
     def get_sql(self, get_ids):
@@ -82,6 +85,9 @@ class SnowflakeSchema(object):
             WHERE
                 referenced_column_name IS NOT NULL
         """, param=self.settings.database)
+
+        if not raw_relations:
+            Log.error("No relations in the database")
 
         for r in self.settings.add_relations:
             try:

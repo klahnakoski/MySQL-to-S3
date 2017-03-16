@@ -1,7 +1,7 @@
 {
 	"extract": {
 		"threads": 1,
-		"last": "output/treeherder_last_run.json",
+		"last": "output/treeherder_last_run_dev.json",
 		"field": [
 			"last_modified",
 			"id"
@@ -71,7 +71,7 @@
 		}
 	},
 	"constants": {
-		"mysql_to_s3.snowflake_schema.DEBUG": false,
+		"mysql_to_s3.snowflake_schema.DEBUG": true,
 		"pyLibrary.sql.mysql.DEBUG": true
 	},
 	"debug": {

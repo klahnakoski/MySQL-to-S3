@@ -54,8 +54,12 @@ class Extract(object):
                 processes = jx.filter(db.query("show processlist"), {"and": [{"neq": {"Command": "Sleep"}}, {"neq": {"Info": "show processlist"}}]})
             except Exception, e:
                 Log.warning("no database", cause=e)
-            # if processes:
-            #     Log.error("Processes are running\n{{list|json}}", list=processes)
+
+            if processes:
+                if DEBUG:
+                    Log.warning("Processes are running\n{{list|json}}", list=processes)
+                else:
+                    Log.error("Processes are running\n{{list|json}}", list=processes)
 
         extract.type = listwrap(extract.type)
         extract.start = listwrap(extract.start)
