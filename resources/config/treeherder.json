@@ -72,7 +72,7 @@
 		}
 	},
 	"constants": {
-		"mysql_to_s3.snowflake_schema.DEBUG": true
+		"mysql_to_s3.snowflake_schema.DEBUG": false
 	},
 	"debug": {
 		"trace": true,
