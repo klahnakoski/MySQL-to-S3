@@ -62,6 +62,7 @@
 			"option.name"
 		],
 		"database": {
+			"debug": false,
 			"schema": "treeherder",
 			"username": "activedata",
 			"ssl": {
@@ -71,8 +72,7 @@
 		}
 	},
 	"constants": {
-		"mysql_to_s3.snowflake_schema.DEBUG": false,
-		"pyLibrary.sql.mysql.DEBUG": true
+		"mysql_to_s3.snowflake_schema.DEBUG": true
 	},
 	"debug": {
 		"trace": true,
@@ -96,7 +96,7 @@
 				"max_interval": "5min",
 				"from_address": "klahnakoski@mozilla.com",
 				"to_address": "klahnakoski@mozilla.com",
-				"subject": "[ALERT][Manager] Problem with esShardBalancer",
+				"subject": "[ALERT][Manager] Problem with Treeherder Extraction",
 				"$ref": "file://~/private.json#aws_credentials"
 			}
 		]

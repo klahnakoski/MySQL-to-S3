@@ -54,8 +54,12 @@ class Extract(object):
                 processes = jx.filter(db.query("show processlist"), {"and": [{"neq": {"Command": "Sleep"}}, {"neq": {"Info": "show processlist"}}]})
             except Exception, e:
                 Log.warning("no database", cause=e)
-            # if processes:
-            #     Log.error("Processes are running\n{{list|json}}", list=processes)
+
+            if processes:
+                if DEBUG:
+                    Log.warning("Processes are running\n{{list|json}}", list=processes)
+                else:
+                    Log.error("Processes are running\n{{list|json}}", list=processes)
 
         extract.type = listwrap(extract.type)
         extract.start = listwrap(extract.start)
@@ -332,7 +336,7 @@ def main():
             please_stop = Signal()
             Thread.wait_for_shutdown_signal(please_stop=please_stop, allow_exit=True, wait_forever=False)
     except Exception, e:
-        Log.error("Problem with data extraction", e)
+        Log.warning("Problem with data extraction", e)
     finally:
         Log.stop()
 
