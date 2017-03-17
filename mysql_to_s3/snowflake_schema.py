@@ -35,7 +35,7 @@ class SnowflakeSchema(object):
         self.settings.exclude = set(self.settings.exclude)
         self.settings.show_foreign_keys = coalesce(self.settings.show_foreign_keys, True)
 
-        self.all_nested_paths=None
+        self.all_nested_paths = None
         self.nested_path_to_join = None
         self.columns = None
         try:
@@ -292,8 +292,9 @@ class SnowflakeSchema(object):
             if DEBUG:
                 Log.note("Trace {{path}}", path=path)
             if position.name != "__ids__":
-                # USED TO CONFIRM WE CAN ACCESS THE TABLE (WILL THROW ERROR WHEN IF IT FAILS)
-                self.db.query("SELECT * FROM "+self.db.quote_column(position.name, position.schema)+" LIMIT 1")
+                with Timer("Test we can access "+position.name, debug=DEBUG):
+                    # USED TO CONFIRM WE CAN ACCESS THE TABLE (WILL THROW ERROR WHEN IF IT FAILS)
+                    self.db.query("SELECT * FROM "+self.db.quote_column(position.name, position.schema)+" LIMIT 1")
 
             if position.name in reference_all_tables:
                 no_nested_docs = True
@@ -513,7 +514,7 @@ class SnowflakeSchema(object):
             item = todo.pop(0)
             follow_paths(**item)
 
-        self.all_nested_paths=all_nested_paths
+        self.all_nested_paths = all_nested_paths
         self.nested_path_to_join = nested_path_to_join
         self.columns = output_columns
 
