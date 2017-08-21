@@ -15,17 +15,18 @@ from __future__ import unicode_literals
 from contextlib import closing
 from tempfile import NamedTemporaryFile
 
+from future.utils import text_type
+from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
 from mo_files import File
 from mo_kwargs import override
 from mo_logs import Log, startup, constants, machine_metadata
 from mo_threads import Signal, Thread, Queue, THREAD_STOP
-from mo_times import Date, Duration
+from mo_times import Date, Duration, DAY
 from mo_times.timer import Timer
+from pyLibrary import convert, aws
 
-from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
-from pyLibrary import convert, aws
 from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_git_revision
@@ -52,7 +53,7 @@ class Extract(object):
             processes = None
             try:
                 processes = jx.filter(db.query("show processlist"), {"and": [{"neq": {"Command": "Sleep"}}, {"neq": {"Info": "show processlist"}}]})
-            except Exception, e:
+            except Exception as e:
                 Log.warning("no database", cause=e)
 
             if processes:
@@ -87,9 +88,17 @@ class Extract(object):
     def pull_all_remaining(self, please_stop):
         try:
             try:
-                start_point, first_value = File(self.settings.extract.last).read_json()
-                start_point = tuple(start_point)
-            except Exception, _:
+                content = File(self.settings.extract.last).read_json()
+                if len(content) == 1:
+                    Log.note("Got a manually generated file")
+                    start_point = tuple(content[0])
+                    first_value = [self._extract.start[0] + (start_point[0] * DAY), start_point[1]]
+                else:
+                    Log.note("Got a machine generated file")
+                    start_point, first_value = content
+                    start_point = tuple(start_point)
+            except Exception as _:
+                Log.error("Expecting a file {{filename}} with the last good S3 bucket etl id in array form eg: [[954, 0]]", filename=self.settings.extract.last)
                 start_point = tuple(self._extract.start)
                 first_value = Null
 
@@ -131,7 +140,7 @@ class Extract(object):
                     if count < batch_size:
                         self.queue.add(THREAD_STOP)
                         break
-        except Exception, e:
+        except Exception as e:
             Log.warning("Problem pulling data", cause=e)
         finally:
             self.done_pulling.go()
@@ -185,7 +194,7 @@ class Extract(object):
             cursor = db.db.cursor()
             try:
                 cursor.execute(sql)
-            except Exception, e:
+            except Exception as e:
                 Log.error("Problem with {{sql}}", sql=sql, cause=e)
 
         extract = self.settings.extract
@@ -219,10 +228,10 @@ class Extract(object):
                 self.construct_docs(cursor, append, please_stop)
 
         # WRITE TO S3
-        s3_file_name = ".".join(map(unicode, start_point))
+        s3_file_name = ".".join(map(text_type, start_point))
         with Timer("write to destination"):
             try:
-                if not isinstance(self.settings.destination, unicode):
+                if not isinstance(self.settings.destination, text_type):
                     destination = self.bucket.get_key(s3_file_name, must_exist=False)
                     destination.write_lines(temp_file)
                 else:
@@ -326,16 +335,16 @@ def main():
                             break
                         try:
                             extractor.extract(db=db, please_stop=please_stop, **kwargs)
-                        except Exception, e:
+                        except Exception as e:
                             Log.warning("Could not extract", cause=e)
                             extractor.queue.add(kwargs)
 
             for i in range(settings.extract.threads):
-                Thread.run("extract #"+unicode(i), extract)
+                Thread.run("extract #"+text_type(i), extract)
 
             please_stop = Signal()
             Thread.wait_for_shutdown_signal(please_stop=please_stop, allow_exit=True, wait_forever=False)
-    except Exception, e:
+    except Exception as e:
         Log.warning("Problem with data extraction", e)
     finally:
         Log.stop()
