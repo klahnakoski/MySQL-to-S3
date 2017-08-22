@@ -15,21 +15,21 @@ from __future__ import unicode_literals
 from contextlib import closing
 from tempfile import NamedTemporaryFile
 
+from jx_python import jx
+from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
 from mo_files import File
 from mo_kwargs import override
 from mo_logs import Log, startup, constants, machine_metadata
 from mo_threads import Signal, Thread, Queue, THREAD_STOP
 from mo_times import Date, Duration
 from mo_times.timer import Timer
+from pyLibrary import convert, aws
 
-from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
-from pyLibrary import convert, aws
 from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_git_revision
-from pyLibrary.queries import jx
 from pyLibrary.sql import SQL
 from pyLibrary.sql.mysql import MySQL
 

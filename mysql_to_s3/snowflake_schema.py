@@ -19,7 +19,7 @@ from mo_logs import Log, strings
 from mo_dots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field
 from mo_math.randoms import Random
 
-from pyLibrary.queries import jx
+from jx_python import jx
 from mo_collections import UniqueIndex
 from pyLibrary.sql.mysql import MySQL
 from mo_times.timer import Timer
