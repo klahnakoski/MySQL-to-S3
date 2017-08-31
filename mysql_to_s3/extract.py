@@ -49,7 +49,7 @@ class Extract(object):
         get_git_revision()
 
         # VERIFY WE DO NOT HAVE TOO MANY OTHER PROCESSES WORKING ON STUFF
-        with closing(MySQL(**kwargs.snowflake.database)) as db:
+        with MySQL(**kwargs.snowflake.database) as db:
             processes = None
             try:
                 processes = jx.filter(db.query("show processlist"), {"and": [{"neq": {"Command": "Sleep"}}, {"neq": {"Info": "show processlist"}}]})
@@ -90,11 +90,11 @@ class Extract(object):
             try:
                 content = File(self.settings.extract.last).read_json()
                 if len(content) == 1:
-                    Log.note("Got a manually generated file")
+                    Log.note("Got a manually generated file {{filename}}", filename=self.settings.extract.last)
                     start_point = tuple(content[0])
                     first_value = [self._extract.start[0] + (start_point[0] * DAY), start_point[1]]
                 else:
-                    Log.note("Got a machine generated file")
+                    Log.note("Got a machine generated file {{filename}}", filename=self.settings.extract.last)
                     start_point, first_value = content
                     start_point = tuple(start_point)
             except Exception as _:
@@ -111,7 +111,7 @@ class Extract(object):
                     counter = BatchCounter(start=s, size=b, child=counter)
 
             batch_size = self._extract.batch.last() * 2 * self.settings.extract.threads
-            with closing(MySQL(**self.settings.snowflake.database)) as db:
+            with MySQL(**self.settings.snowflake.database) as db:
                 while not please_stop:
                     sql = self._build_list_sql(db, first_value, batch_size + 1)
                     pending = []
@@ -128,7 +128,7 @@ class Extract(object):
                                 if key != start_point:
                                     if first_value:
                                         if not acc:
-                                            Log.error("not expected")
+                                            Log.error("not expected, {{filename}} is probably set too far in the past", filename=self.settings.extract.last)
                                         pending.append({"start_point": start_point, "first_value": first_value, "data": acc})
                                     acc = []
                                     start_point = key
@@ -191,11 +191,7 @@ class Extract(object):
         )
         sql = self.schema.get_sql(ids)
         with Timer("Sending SQL"):
-            cursor = db.db.cursor()
-            try:
-                cursor.execute(sql)
-            except Exception as e:
-                Log.error("Problem with {{sql}}", sql=sql, cause=e)
+            cursor = db.query(sql, stream=True)
 
         extract = self.settings.extract
         fact_table = self.settings.snowflake.fact_table
@@ -329,7 +325,7 @@ def main():
             extractor = Extract(settings)
 
             def extract(please_stop):
-                with closing(MySQL(**settings.snowflake.database)) as db:
+                with MySQL(**settings.snowflake.database) as db:
                     for kwargs in extractor.queue:
                         if please_stop:
                             break

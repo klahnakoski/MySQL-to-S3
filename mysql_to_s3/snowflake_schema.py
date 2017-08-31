@@ -14,9 +14,11 @@ from __future__ import unicode_literals
 
 from copy import deepcopy, copy
 
+from future.utils import text_type
 from mo_kwargs import override
 from mo_logs import Log, strings
 from mo_dots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field
+from mo_logs.exceptions import Explanation
 from mo_math.randoms import Random
 
 from jx_python import jx
@@ -38,16 +40,12 @@ class SnowflakeSchema(object):
         self.all_nested_paths = None
         self.nested_path_to_join = None
         self.columns = None
-        try:
+
+        with Explanation("scan database", debug=DEBUG):
             self.db = MySQL(**kwargs.database)
-        except Exception, e:
-            Log.warning("no database", cause=e)
-        with Timer("scan database", debug=DEBUG):
-            try:
-                self._scan_database()
-            except Exception as e:
-                Log.warning("problem in database scanner", cause=e)
-            self.db.close()
+            with self.db:
+                with self.db.transaction():
+                    self._scan_database()
 
     def get_sql(self, get_ids):
         sql = self._compose_sql(get_ids)
@@ -104,7 +102,7 @@ class SnowflakeSchema(object):
                     column_name=a[2],
                     ordinal_position=1
                 ))
-            except Exception, e:
+            except Exception as e:
                 Log.error("Could not parse {{line|quote}}", line=r, cause=e)
 
         relations = jx.select(raw_relations, [
@@ -318,7 +316,7 @@ class SnowflakeSchema(object):
                 many_to_one_joins = nested_path_to_join[nested_path[0]]
                 index = len(many_to_one_joins)
 
-                alias = "t" + unicode(index)
+                alias = "t" + text_type(index)
                 for c in constraint_columns:
                     c.referenced.table.alias = alias
                     c.table = position
@@ -352,7 +350,7 @@ class SnowflakeSchema(object):
                             c_index = len(output_columns)
                             output_columns.append({
                                 "table_alias": alias,
-                                "column_alias": "c"+unicode(c_index),
+                                "column_alias": "c"+text_type(c_index),
                                 "column": col,
                                 "sort": True,
                                 "path": referenced_column_path,
@@ -363,7 +361,7 @@ class SnowflakeSchema(object):
                             c_index = len(output_columns)
                             output_columns.append({
                                 "table_alias": alias,
-                                "column_alias": "c"+unicode(c_index),
+                                "column_alias": "c"+text_type(c_index),
                                 "column": col,
                                 "sort": False,
                                 "path": referenced_column_path,
@@ -374,7 +372,7 @@ class SnowflakeSchema(object):
                             c_index = len(output_columns)
                             output_columns.append({
                                 "table_alias": alias,
-                                "column_alias": "c"+unicode(c_index),
+                                "column_alias": "c"+text_type(c_index),
                                 "column": col,
                                 "sort": False,
                                 "path": referenced_column_path,
@@ -385,7 +383,7 @@ class SnowflakeSchema(object):
                             c_index = len(output_columns)
                             output_columns.append({
                                 "table_alias": alias,
-                                "column_alias": "c"+unicode(c_index),
+                                "column_alias": "c"+text_type(c_index),
                                 "column": col,
                                 "sort": False,
                                 "path": referenced_column_path,
@@ -396,7 +394,7 @@ class SnowflakeSchema(object):
                             c_index = len(output_columns)
                             output_columns.append({
                                 "table_alias": alias,
-                                "column_alias": "c"+unicode(c_index),
+                                "column_alias": "c"+text_type(c_index),
                                 "column": col,
                                 "sort": False,
                                 "path": referenced_column_path,
@@ -437,7 +435,7 @@ class SnowflakeSchema(object):
                     #     continue
                     one_to_many_joins = nested_path_to_join[referenced_column_path] = copy(curr_join_list)
                     index = len(one_to_many_joins)
-                    alias = "t"+unicode(index)
+                    alias = "t"+text_type(index)
                     for c in constraint_columns:
                         c.table.alias = alias
                         c.referenced.table = position
@@ -456,7 +454,7 @@ class SnowflakeSchema(object):
                                 c_index = len(output_columns)
                                 output_columns.append({
                                     "table_alias": alias,
-                                    "column_alias": "c"+unicode(c_index),
+                                    "column_alias": "c"+text_type(c_index),
                                     "column": col,
                                     "sort": col.is_id,
                                     "path": referenced_column_path,
@@ -467,7 +465,7 @@ class SnowflakeSchema(object):
                                 c_index = len(output_columns)
                                 output_columns.append({
                                     "table_alias": alias,
-                                    "column_alias": "c"+unicode(c_index),
+                                    "column_alias": "c"+text_type(c_index),
                                     "column": col,
                                     "sort": col.is_id,
                                     "path": referenced_column_path,
@@ -478,7 +476,7 @@ class SnowflakeSchema(object):
                                 c_index = len(output_columns)
                                 output_columns.append({
                                     "table_alias": alias,
-                                    "column_alias": "c"+unicode(c_index),
+                                    "column_alias": "c"+text_type(c_index),
                                     "column": col,
                                     "sort": col.is_id,
                                     "path": referenced_column_path,
@@ -557,7 +555,7 @@ class SnowflakeSchema(object):
             selects = []
             not_null_column_seen = False
             for ci, c in enumerate(self.columns):
-                if c.column_alias[1:] != unicode(ci):
+                if c.column_alias[1:] != text_type(ci):
                     Log.error("expecting consistency")
                 if c.nested_path[0] == nested_path[0]:
                     s = c.table_alias + "." + c.column.column.name + " as " + c.column_alias
