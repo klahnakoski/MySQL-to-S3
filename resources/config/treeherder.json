@@ -60,7 +60,7 @@
 			"machine_platform.platform",
 			"failure_classification.name",
 			"option.name",
-			"job_group.name"
+			"job_group"
 		],
 		"database": {
 			"debug": false,

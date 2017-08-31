@@ -20,7 +20,7 @@ The denormalization process involves walking all foreign key paths, breadth firs
 
 Each fact table is uses a configuration file to control the denormalization process. There are three major properties.  I will use the Treeherder job extract configuration as an example:  
  
-###Extract
+### Extract
 
 Controls the what records get pulled, the size of the batch, and how to name those batches
 
@@ -40,7 +40,7 @@ Controls the what records get pulled, the size of the batch, and how to name tho
 * **`start`** - `strings` - The minimum value for the field expected. Used to start a new extract, and used to know what value to assign to zero
 * **`batch`** - `strings` - size of the batch. For `time` this can be a duration.
 
-###Destination
+### Destination
 
 Where the batches of documents are placed. 
 
@@ -60,7 +60,7 @@ Where the batches of documents are placed.
 * **`aws_secret_access_key`** - *string* - AWS connection info 
 * **`region`** - *string* - AWS region 
 
-###Snowflake
+### Snowflake
 
 The `snowflake` object limits the relational walk used to determine the JSON document shape. Without adding limits, all unique relation paths will be traversed, resulting in large, and possibly redundant, documents. You can `exclude` tables entirely, or declare some tables are good for `reference_only`.  
 
