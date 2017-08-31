@@ -191,7 +191,7 @@ class Extract(object):
         )
         sql = self.schema.get_sql(ids)
         with Timer("Sending SQL"):
-            cursor = db.query(sql, stream=True)
+            cursor = db.query(sql, stream=True, row_tuples=True)
 
         extract = self.settings.extract
         fact_table = self.settings.snowflake.fact_table
@@ -220,8 +220,7 @@ class Extract(object):
                 }
             }))
         with Timer("assemble data"):
-            with closing(cursor):
-                self.construct_docs(cursor, append, please_stop)
+            self.construct_docs(cursor, append, please_stop)
 
         # WRITE TO S3
         s3_file_name = ".".join(map(text_type, start_point))
@@ -326,14 +325,15 @@ def main():
 
             def extract(please_stop):
                 with MySQL(**settings.snowflake.database) as db:
-                    for kwargs in extractor.queue:
-                        if please_stop:
-                            break
-                        try:
-                            extractor.extract(db=db, please_stop=please_stop, **kwargs)
-                        except Exception as e:
-                            Log.warning("Could not extract", cause=e)
-                            extractor.queue.add(kwargs)
+                    with db.transaction():
+                        for kwargs in extractor.queue:
+                            if please_stop:
+                                break
+                            try:
+                                extractor.extract(db=db, please_stop=please_stop, **kwargs)
+                            except Exception as e:
+                                Log.warning("Could not extract", cause=e)
+                                extractor.queue.add(kwargs)
 
             for i in range(settings.extract.threads):
                 Thread.run("extract #"+text_type(i), extract)

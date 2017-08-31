@@ -17,9 +17,9 @@ import subprocess
 from collections import Mapping
 from datetime import datetime
 
-from future.utils import text_type
-
 import mo_json
+from future.utils import text_type
+from jx_python import jx
 from mo_dots import coalesce, wrap, listwrap, unwrap
 from mo_files import File
 from mo_kwargs import override
@@ -32,13 +32,11 @@ from mo_math import Math
 from mo_times import Date
 from pymysql import connect, InterfaceError, cursors
 
-from pyLibrary import convert
-from jx_python import jx
 from pyLibrary.sql import SQL
 
 DEBUG = False
 MAX_BATCH_SIZE = 100
-EXECUTE_TIMEOUT = 60*60*1000  # in milliseconds
+EXECUTE_TIMEOUT = 5*600*1000  # in milliseconds
 
 
 all_db = []
@@ -237,15 +235,15 @@ class MySQL(object):
         except Exception as e:
             Log.error("Problem calling procedure " + proc_name, e)
 
-    def query(self, sql, param=None, stream=False):
+    def query(self, sql, param=None, stream=False, row_tuples=False):
         """
         RETURN LIST OF dicts
         """
-        try:
-            if not self.cursor:  # ALLOW NON-TRANSACTIONAL READS
-                self.begin()
-            self._execute_backlog()
+        if not self.cursor:  # ALLOW NON-TRANSACTIONAL READS
+            Log.error("must perform all queries inside a transaction")
+        self._execute_backlog()
 
+        try:
             if param:
                 sql = expand_template(sql, self.quote_param(param))
             sql = self.preamble + outdent(sql)
@@ -253,11 +251,18 @@ class MySQL(object):
                 Log.note("Execute SQL:\n{{sql}}", sql=indent(sql))
 
             self.cursor.execute(sql)
-            columns = [utf8_to_unicode(d[0]) for d in coalesce(self.cursor.description, [])]
-            if stream:
-                result = (wrap({c: utf8_to_unicode(v) for c, v in zip(columns, row)}) for row in self.cursor)
+            if row_tuples:
+                if stream:
+                    result = self.cursor
+                else:
+                    result = wrap(list(self.cursor))
             else:
-                result = wrap([{c: utf8_to_unicode(v) for c, v in zip(columns, row)} for row in self.cursor])
+                columns = [utf8_to_unicode(d[0]) for d in coalesce(self.cursor.description, [])]
+                if stream:
+                    result = (wrap({c: utf8_to_unicode(v) for c, v in zip(columns, row)}) for row in self.cursor)
+                else:
+                    result = wrap([{c: utf8_to_unicode(v) for c, v in zip(columns, row)} for row in self.cursor])
+
             return result
         except Exception as e:
             if isinstance(e, InterfaceError) or e.message.find("InterfaceError") >= 0:

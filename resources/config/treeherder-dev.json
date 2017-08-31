@@ -59,10 +59,11 @@
 			"repository.name",
 			"machine_platform.platform",
 			"failure_classification.name",
-			"option.name"
+			"option.name",
+			"job_group.name"
 		],
 		"database": {
-			"debug": true,
+			"debug": false,
 			"schema": "treeherder",
 			"username": "activedata",
 			"ssl": {
@@ -72,8 +73,8 @@
 		}
 	},
 	"constants": {
-		"mysql_to_s3.snowflake_schema.DEBUG": true,
-		"pyLibrary.sql.mysql.DEBUG": true
+//		"mysql_to_s3.snowflake_schema.DEBUG": true,
+//		"pyLibrary.sql.mysql.DEBUG": true
 	},
 	"debug": {
 		"trace": true,
