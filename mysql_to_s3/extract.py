@@ -16,6 +16,7 @@ from contextlib import closing
 from tempfile import NamedTemporaryFile
 
 from future.utils import text_type
+from jx_python import jx
 from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
 from mo_files import File
 from mo_kwargs import override
@@ -24,15 +25,14 @@ from mo_threads import Signal, Thread, Queue, THREAD_STOP
 from mo_times import Date, Duration, DAY
 from mo_times.timer import Timer
 from pyLibrary import convert, aws
-
-from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
-from mysql_to_s3.snowflake_schema import SnowflakeSchema
 from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_git_revision
-from pyLibrary.queries import jx
 from pyLibrary.sql import SQL
 from pyLibrary.sql.mysql import MySQL
+
+from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
+from mysql_to_s3.snowflake_schema import SnowflakeSchema
 
 DEBUG = True
 
@@ -49,7 +49,7 @@ class Extract(object):
         get_git_revision()
 
         # VERIFY WE DO NOT HAVE TOO MANY OTHER PROCESSES WORKING ON STUFF
-        with closing(MySQL(**kwargs.snowflake.database)) as db:
+        with MySQL(**kwargs.snowflake.database) as db:
             processes = None
             try:
                 processes = jx.filter(db.query("show processlist"), {"and": [{"neq": {"Command": "Sleep"}}, {"neq": {"Info": "show processlist"}}]})
@@ -90,11 +90,11 @@ class Extract(object):
             try:
                 content = File(self.settings.extract.last).read_json()
                 if len(content) == 1:
-                    Log.note("Got a manually generated file")
+                    Log.note("Got a manually generated file {{filename}}", filename=self.settings.extract.last)
                     start_point = tuple(content[0])
                     first_value = [self._extract.start[0] + (start_point[0] * DAY), start_point[1]]
                 else:
-                    Log.note("Got a machine generated file")
+                    Log.note("Got a machine generated file {{filename}}", filename=self.settings.extract.last)
                     start_point, first_value = content
                     start_point = tuple(start_point)
             except Exception as _:
@@ -111,7 +111,7 @@ class Extract(object):
                     counter = BatchCounter(start=s, size=b, child=counter)
 
             batch_size = self._extract.batch.last() * 2 * self.settings.extract.threads
-            with closing(MySQL(**self.settings.snowflake.database)) as db:
+            with MySQL(**self.settings.snowflake.database) as db:
                 while not please_stop:
                     sql = self._build_list_sql(db, first_value, batch_size + 1)
                     pending = []
@@ -128,7 +128,7 @@ class Extract(object):
                                 if key != start_point:
                                     if first_value:
                                         if not acc:
-                                            Log.error("not expected")
+                                            Log.error("not expected, {{filename}} is probably set too far in the past", filename=self.settings.extract.last)
                                         pending.append({"start_point": start_point, "first_value": first_value, "data": acc})
                                     acc = []
                                     start_point = key
@@ -191,11 +191,7 @@ class Extract(object):
         )
         sql = self.schema.get_sql(ids)
         with Timer("Sending SQL"):
-            cursor = db.db.cursor()
-            try:
-                cursor.execute(sql)
-            except Exception as e:
-                Log.error("Problem with {{sql}}", sql=sql, cause=e)
+            cursor = db.query(sql, stream=True, row_tuples=True)
 
         extract = self.settings.extract
         fact_table = self.settings.snowflake.fact_table
@@ -224,8 +220,7 @@ class Extract(object):
                 }
             }))
         with Timer("assemble data"):
-            with closing(cursor):
-                self.construct_docs(cursor, append, please_stop)
+            self.construct_docs(cursor, append, please_stop)
 
         # WRITE TO S3
         s3_file_name = ".".join(map(text_type, start_point))
@@ -329,15 +324,16 @@ def main():
             extractor = Extract(settings)
 
             def extract(please_stop):
-                with closing(MySQL(**settings.snowflake.database)) as db:
-                    for kwargs in extractor.queue:
-                        if please_stop:
-                            break
-                        try:
-                            extractor.extract(db=db, please_stop=please_stop, **kwargs)
-                        except Exception as e:
-                            Log.warning("Could not extract", cause=e)
-                            extractor.queue.add(kwargs)
+                with MySQL(**settings.snowflake.database) as db:
+                    with db.transaction():
+                        for kwargs in extractor.queue:
+                            if please_stop:
+                                break
+                            try:
+                                extractor.extract(db=db, please_stop=please_stop, **kwargs)
+                            except Exception as e:
+                                Log.warning("Could not extract", cause=e)
+                                extractor.queue.add(kwargs)
 
             for i in range(settings.extract.threads):
                 Thread.run("extract #"+text_type(i), extract)

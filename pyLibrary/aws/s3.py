@@ -19,10 +19,12 @@ from tempfile import TemporaryFile
 import boto
 from BeautifulSoup import BeautifulSoup
 from boto.s3.connection import Location
+from future.utils import text_type
 
 from mo_dots import wrap, Null, coalesce, unwrap, Data
 from mo_kwargs import override
 from mo_logs import Log, Except
+from mo_logs.url import value2url_param
 from mo_times.dates import Date
 from mo_times.timer import Timer
 from pyLibrary import convert
@@ -366,10 +368,11 @@ class Bucket(object):
                 break
             except Exception as e:
                 e = Except.wrap(e)
-                Log.warning("could not push data to s3", cause=e)
-                if 'Access Denied' in e:
-                    break
                 retry -= 1
+                if retry == 0 or 'Access Denied' in e or "No space left on device" in e:
+                    Log.error("could not push data to s3", cause=e)
+                else:
+                    Log.warning("could not push data to s3", cause=e)
 
         if self.settings.public:
             storage.set_acl('public-read')
@@ -403,11 +406,11 @@ class SkeletonBucket(Bucket):
 
 
 content_keys={
-    "key": unicode,
+    "key": text_type,
     "lastmodified": Date,
-    "etag": unicode,
+    "etag": text_type,
     "size": int,
-    "storageclass": unicode
+    "storageclass": text_type
 }
 
 
@@ -442,7 +445,7 @@ class PublicBucket(object):
         state.get_more = True
 
         def more():
-            xml = http.get(self.url + "?" + convert.value2url(state)).content
+            xml = http.get(self.url + "?" + value2url_param(state)).content
             data = BeautifulSoup(xml)
 
             state.get_more = data.find("istruncated").contents[0] == "true"

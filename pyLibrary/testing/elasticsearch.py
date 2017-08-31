@@ -19,7 +19,7 @@ from mo_dots import unwrap, wrap
 from pyLibrary import convert
 from pyLibrary.env.elasticsearch import Index, Cluster
 from mo_kwargs import override
-from pyLibrary.queries import jx
+from jx_python import jx
 
 
 def make_test_instance(name, settings):
@@ -74,7 +74,7 @@ class Fake_ES():
 
         unwrap(self.data).update(records)
 
-        data_as_json = convert.value2json(self.data, pretty=True)
+        data_as_json = value2json(self.data, pretty=True)
 
         File(self.filename).write(data_as_json)
         Log.note("{{num}} documents added",  num= len(records))

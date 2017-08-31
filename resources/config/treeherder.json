@@ -59,7 +59,8 @@
 			"repository.name",
 			"machine_platform.platform",
 			"failure_classification.name",
-			"option.name"
+			"option.name",
+			"job_group.name"
 		],
 		"database": {
 			"debug": false,

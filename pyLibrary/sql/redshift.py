@@ -21,7 +21,7 @@ from pyLibrary import convert
 from mo_logs.exceptions import suppress_exception
 from mo_logs import Log
 from mo_kwargs import override
-from pyLibrary.queries import jx
+from jx_python import jx
 from pyLibrary.sql import SQL
 from mo_logs.strings import expand_template
 from mo_threads import Lock
@@ -143,7 +143,7 @@ class Redshift(object):
         if value ==None:
             return SQL("NULL")
         if isinstance(value, list):
-            json = convert.value2json(value)
+            json = value2json(value)
             return self.quote_value(json)
 
         if isinstance(value, basestring) and len(value) > 256:
