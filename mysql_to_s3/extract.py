@@ -83,7 +83,7 @@ class Extract(object):
 
         self.bucket = s3.Bucket(self.settings.destination)
         self.notify = aws.Queue(self.settings.notify)
-        Thread.run("get records", self.pull_all_remaining)
+        # Thread.run("get records", self.pull_all_remaining)
 
     def pull_all_remaining(self, please_stop):
         try:
@@ -190,6 +190,9 @@ class Extract(object):
             " WHERE " + id + " in (" + ",".join(map(db.quote_value, data)) + ")"
         )
         sql = self.schema.get_sql(ids)
+        if DEBUG:
+            Log.note("SQL: {{sql}}", sql=sql)
+
         with Timer("Sending SQL"):
             cursor = db.query(sql, stream=True, row_tuples=True)
 

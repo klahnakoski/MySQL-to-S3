@@ -14,19 +14,21 @@ from __future__ import unicode_literals
 
 from copy import deepcopy, copy
 
-from future.utils import text_type
-from mo_kwargs import override
-from mo_logs import Log, strings
-from mo_dots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field
-from mo_logs.exceptions import Explanation
-from mo_math.randoms import Random
+from pyLibrary.sql import SQL
 
 from jx_python import jx
 from mo_collections import UniqueIndex
-from pyLibrary.sql.mysql import MySQL
+from mo_dots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field
+from mo_future import text_type
+from mo_kwargs import override
+from mo_logs import Log, strings
+from mo_logs.exceptions import Explanation
+from mo_math.randoms import Random
 from mo_times.timer import Timer
 
-DEBUG = False
+from pyLibrary.sql.mysql import MySQL
+
+DEBUG = True
 
 
 class SnowflakeSchema(object):
@@ -46,6 +48,8 @@ class SnowflakeSchema(object):
             with self.db:
                 with self.db.transaction():
                     self._scan_database()
+        if DEBUG:
+            Log.note("SQL={{sql}}", sql=self.get_sql(get_ids=SQL("SELECT 1")))
 
     def get_sql(self, get_ids):
         sql = self._compose_sql(get_ids)

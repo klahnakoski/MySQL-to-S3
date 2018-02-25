@@ -33,7 +33,7 @@ class TestExtract(FuzzyTestCase):
             try:
                 with MySQL(schema=None, kwargs=settings.database) as db:
                     db.query("drop database testing")
-            except Exception, e:
+            except Exception as e:
                 if "Can't drop database " in e:
                     pass
                 else:
@@ -354,3 +354,9 @@ expected_results = {
         {"fact_table": {"id": 22, "name": "L"}}
     ]
 }
+
+
+
+
+
+
