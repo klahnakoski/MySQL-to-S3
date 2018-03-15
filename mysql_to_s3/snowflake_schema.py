@@ -28,7 +28,7 @@ from mo_times.timer import Timer
 
 from pyLibrary.sql.mysql import MySQL
 
-DEBUG = True
+DEBUG = False
 
 
 class SnowflakeSchema(object):

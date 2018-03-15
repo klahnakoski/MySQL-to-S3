@@ -52,7 +52,13 @@ class Extract(object):
         with MySQL(**kwargs.snowflake.database) as db:
             processes = None
             try:
-                processes = jx.filter(db.query("show processlist"), {"and": [{"neq": {"Command": "Sleep"}}, {"neq": {"Info": "show processlist"}}]})
+                processes = jx.filter(
+                    db.query("show processlist"),
+                    {"and": [
+                        {"neq": {"Command": "Sleep"}},
+                        {"neq": {"Info": "show processlist"}}
+                    ]}
+                )
             except Exception as e:
                 Log.warning("no database", cause=e)
 
@@ -83,7 +89,6 @@ class Extract(object):
 
         self.bucket = s3.Bucket(self.settings.destination)
         self.notify = aws.Queue(self.settings.notify)
-        # Thread.run("get records", self.pull_all_remaining)
 
     def pull_all_remaining(self, please_stop):
         try:
