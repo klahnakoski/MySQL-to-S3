@@ -28,7 +28,7 @@ from pyLibrary import convert, aws
 from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_git_revision
-from pyLibrary.sql import SQL
+from pyLibrary.sql import SQL, sql_list, SQL_LIMIT, SQL_ORDERBY, SQL_WHERE, SQL_FROM, SQL_SELECT, SQL_AND, SQL_OR, sql_and
 from pyLibrary.sql.mysql import MySQL
 
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
@@ -89,6 +89,7 @@ class Extract(object):
 
         self.bucket = s3.Bucket(self.settings.destination)
         self.notify = aws.Queue(self.settings.notify)
+        Thread.run("get records", self.pull_all_remaining)
 
     def pull_all_remaining(self, please_stop):
         try:
@@ -102,6 +103,7 @@ class Extract(object):
                     Log.note("Got a machine generated file {{filename}}", filename=self.settings.extract.last)
                     start_point, first_value = content
                     start_point = tuple(start_point)
+                Log.note("First value is {{start1|date}}, {{start2}}", start1=first_value[0], start2=first_value[1])
             except Exception as _:
                 Log.error("Expecting a file {{filename}} with the last good S3 bucket etl id in array form eg: [[954, 0]]", filename=self.settings.extract.last)
                 start_point = tuple(self._extract.start)
@@ -155,11 +157,11 @@ class Extract(object):
         # TODO: ENSURE THE LAST COLUMN IS THE id
         if first:
             dim = len(self._extract.field)
-            where = " OR ".join(
-                "(" + " AND ".join(
+            where = SQL_OR.join(
+                sql_and(
                     db.quote_column(f) + ineq(i, e, dim) + db.quote_value(Date(v) if t=="time" else v)
                     for e, (f, v, t) in enumerate(zip(self._extract.field[0:i + 1:], first, self._extract.type[0:i+1:]))
-                ) + ")"
+                )
                 for i in range(dim)
             )
         else:
@@ -172,11 +174,11 @@ class Extract(object):
             else:
                 selects.append(db.quote_column(f))
         sql = (
-            "SELECT " + ", ".join(selects) +
-            "\nFROM " + self.settings.snowflake.fact_table +
-            "\nWHERE " + where +
-            "\nORDER BY " + ", ".join(db.quote_column(f) for f in self._extract.field) +
-            "\nLIMIT " + db.quote_value(batch_size)
+            SQL_SELECT + sql_list(selects) +
+            SQL_FROM + self.settings.snowflake.fact_table +
+            SQL_WHERE + where +
+            SQL_ORDERBY + sql_list(db.quote_column(f) for f in self._extract.field) +
+            SQL_LIMIT + db.quote_value(batch_size)
         )
         return sql
 

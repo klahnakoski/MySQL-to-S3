@@ -111,6 +111,10 @@ def sql_list(list_):
     return SQL(", ".join(l.template for l in list_))
 
 
+def sql_and(list_):
+    return SQL_AND.join(list_)
+
+
 def sql_iso(sql):
     return "("+sql+")"
 

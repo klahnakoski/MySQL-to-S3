@@ -48,8 +48,6 @@ class SnowflakeSchema(object):
             with self.db:
                 with self.db.transaction():
                     self._scan_database()
-        if DEBUG:
-            Log.note("SQL={{sql}}", sql=self.get_sql(get_ids=SQL("SELECT 1")))
 
     def get_sql(self, get_ids):
         sql = self._compose_sql(get_ids)
