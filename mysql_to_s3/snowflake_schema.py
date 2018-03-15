@@ -65,9 +65,6 @@ class SnowflakeSchema(object):
 
         union_all_sql = "\nUNION ALL\n".join(sql)
         union_all_sql = "SELECT * FROM (" + union_all_sql + ") as a\nORDER BY " + ",".join(sort)
-
-        if DEBUG:
-            Log.note("{{sql}}", sql=union_all_sql)
         return union_all_sql
 
     def _scan_database(self):
