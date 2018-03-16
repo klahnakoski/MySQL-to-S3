@@ -14,8 +14,6 @@ from __future__ import unicode_literals
 
 from copy import deepcopy, copy
 
-from pyLibrary.sql import SQL
-
 from jx_python import jx
 from mo_collections import UniqueIndex
 from mo_dots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field
@@ -25,8 +23,8 @@ from mo_logs import Log, strings
 from mo_logs.exceptions import Explanation
 from mo_math.randoms import Random
 from mo_times.timer import Timer
-
-from pyLibrary.sql.mysql import MySQL
+from pyLibrary.sql import SQL_SELECT, sql_list, sql_alias, SQL_NULL, sql_iso, SQL_FROM, SQL_LEFT_JOIN, sql_and, SQL_ON, SQL_JOIN, SQL_UNION_ALL, SQL_ORDERBY, SQL_STAR, SQL_IS_NOT_NULL
+from pyLibrary.sql.mysql import MySQL, quote_column
 
 DEBUG = False
 
@@ -57,12 +55,16 @@ class SnowflakeSchema(object):
         ordering = []
         for ci, c in enumerate(self.columns):
             if c.sort:
-                sort.append(c.column_alias + " IS NOT NULL")
-                sort.append(c.column_alias)
+                sort.append(quote_column(c.column_alias) + SQL_IS_NOT_NULL)
+                sort.append(quote_column(c.column_alias))
                 ordering.append(ci)
 
-        union_all_sql = "\nUNION ALL\n".join(sql)
-        union_all_sql = "SELECT * FROM (" + union_all_sql + ") as a\nORDER BY " + ",".join(sort)
+        union_all_sql = SQL_UNION_ALL.join(sql)
+        union_all_sql = (
+            SQL_SELECT + SQL_STAR +
+            SQL_FROM + sql_alias(sql_iso(union_all_sql), quote_column('a')) +
+            SQL_ORDERBY + sql_list(sort)
+        )
         return union_all_sql
 
     def _scan_database(self):
@@ -291,7 +293,7 @@ class SnowflakeSchema(object):
             if position.name != "__ids__":
                 with Timer("Test we can access "+position.name, debug=DEBUG):
                     # USED TO CONFIRM WE CAN ACCESS THE TABLE (WILL THROW ERROR WHEN IF IT FAILS)
-                    self.db.query("SELECT * FROM "+self.db.quote_column(position.name, position.schema)+" LIMIT 1")
+                    self.db.query("SELECT * FROM "+quote_column(position.name, position.schema)+" LIMIT 1")
 
             if position.name in reference_all_tables:
                 no_nested_docs = True
@@ -530,22 +532,22 @@ class SnowflakeSchema(object):
                 curr_join = wrap(curr_join)
                 rel = curr_join.join_columns[0]
                 if i == 0:
-                    sql_joins.append("\nFROM (" + get_ids + ") AS " + rel.referenced.table.alias)
+                    sql_joins.append(SQL_FROM + sql_alias(sql_iso(get_ids), quote_column(rel.referenced.table.alias)))
                 elif curr_join.children:
-                    full_name = self.db.quote_column(rel.table.name, rel.table.schema)
+                    full_name = quote_column(rel.table.name, rel.table.schema)
                     sql_joins.append(
-                        "\nJOIN " + full_name + " AS " + rel.table.alias +
-                        "\nON " + " AND ".join(
-                            rel.table.alias + "." + self.db.quote_column(const_col.column.name) + "=" + rel.referenced.table.alias + "." + self.db.quote_column(const_col.referenced.column.name)
+                        SQL_JOIN + sql_alias(full_name, quote_column(rel.table.alias)) +
+                        SQL_ON + sql_and(
+                            quote_column(const_col.column.name,rel.table.alias) + "=" + quote_column(const_col.referenced.column.name, rel.referenced.table.alias)
                             for const_col in curr_join.join_columns
                         )
                     )
                 else:
-                    full_name = self.db.quote_column(rel.referenced.table.name, rel.referenced.table.schema)
+                    full_name = quote_column(rel.referenced.table.name, rel.referenced.table.schema)
                     sql_joins.append(
-                        "\nLEFT JOIN " + full_name + " AS " + rel.referenced.table.alias +
-                        "\nON " + " AND ".join(
-                            rel.referenced.table.alias + "." + self.db.quote_column(const_col.referenced.column.name) + "=" + rel.table.alias + "." + self.db.quote_column(const_col.column.name)
+                        SQL_LEFT_JOIN + sql_alias(full_name, quote_column(rel.referenced.table.alias)) +
+                        SQL_ON + sql_and(
+                            quote_column(const_col.referenced.column.name, rel.referenced.table.alias) + "=" + quote_column(const_col.column.name, rel.table.alias)
                             for const_col in curr_join.join_columns
                         )
                     )
@@ -557,7 +559,7 @@ class SnowflakeSchema(object):
                 if c.column_alias[1:] != text_type(ci):
                     Log.error("expecting consistency")
                 if c.nested_path[0] == nested_path[0]:
-                    s = c.table_alias + "." + c.column.column.name + " as " + c.column_alias
+                    s = sql_alias(quote_column(c.column.column.name, c.table_alias), quote_column(c.column_alias))
                     if s == None:
                         Log.error("bug")
                     selects.append(s)
@@ -565,15 +567,15 @@ class SnowflakeSchema(object):
                 elif startswith_field(nested_path[0], c.path):
                     # PARENT ID REFERENCES
                     if c.column.is_id:
-                        s = c.table_alias + "." + c.column.column.name + " as " + c.column_alias
+                        s = sql_alias(quote_column(c.column.column.name, c.table_alias),  quote_column(c.column_alias))
                         selects.append(s)
                         not_null_column_seen = True
                     else:
-                        selects.append("NULL as " + c.column_alias)
+                        selects.append(sql_alias(SQL_NULL,  quote_column(c.column_alias)))
                 else:
-                    selects.append("NULL as " + c.column_alias)
+                    selects.append(sql_alias(SQL_NULL,  quote_column(c.column_alias)))
 
             if not_null_column_seen:
-                sql.append("SELECT\n\t" + ",\n\t".join(selects) + "".join(sql_joins))
+                sql.append(SQL_SELECT + sql_list(selects) + "".join(sql_joins))
         return sql
 

@@ -13,12 +13,12 @@ from __future__ import division
 from __future__ import unicode_literals
 
 from contextlib import closing
-from tempfile import NamedTemporaryFile
 
-from future.utils import text_type
+from mo_future import text_type
+
 from jx_python import jx
 from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
-from mo_files import File
+from mo_files import File, TempFile
 from mo_kwargs import override
 from mo_logs import Log, startup, constants, machine_metadata
 from mo_threads import Signal, Thread, Queue, THREAD_STOP
@@ -28,8 +28,8 @@ from pyLibrary import convert, aws
 from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_git_revision
-from pyLibrary.sql import SQL, sql_list, SQL_LIMIT, SQL_ORDERBY, SQL_WHERE, SQL_FROM, SQL_SELECT, SQL_AND, SQL_OR, sql_and
-from pyLibrary.sql.mysql import MySQL
+from pyLibrary.sql import SQL, sql_list, SQL_LIMIT, SQL_ORDERBY, SQL_WHERE, SQL_FROM, SQL_SELECT, SQL_AND, SQL_OR, sql_and, sql_iso, sql_alias, SQL_TRUE
+from pyLibrary.sql.mysql import MySQL, quote_column
 
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
@@ -158,26 +158,26 @@ class Extract(object):
         if first:
             dim = len(self._extract.field)
             where = SQL_OR.join(
-                sql_and(
-                    db.quote_column(f) + ineq(i, e, dim) + db.quote_value(Date(v) if t=="time" else v)
+                sql_iso(sql_and(
+                    quote_column(f) + ineq(i, e, dim) + db.quote_value(Date(v) if t=="time" else v)
                     for e, (f, v, t) in enumerate(zip(self._extract.field[0:i + 1:], first, self._extract.type[0:i+1:]))
-                )
+                ))
                 for i in range(dim)
             )
         else:
-            where = "1=1"
+            where = SQL_TRUE
 
         selects = []
         for t, f in zip(self._extract.type, self._extract.field):
             if t == "time":
-                selects.append("CAST(" + db.quote_column(f) + " as DATETIME(6))")
+                selects.append("CAST"+sql_iso(sql_alias(quote_column(f), SQL("DATETIME(6)"))))
             else:
-                selects.append(db.quote_column(f))
+                selects.append(quote_column(f))
         sql = (
             SQL_SELECT + sql_list(selects) +
             SQL_FROM + self.settings.snowflake.fact_table +
             SQL_WHERE + where +
-            SQL_ORDERBY + sql_list(db.quote_column(f) for f in self._extract.field) +
+            SQL_ORDERBY + sql_list(quote_column(f) for f in self._extract.field) +
             SQL_LIMIT + db.quote_value(batch_size)
         )
         return sql
@@ -190,11 +190,11 @@ class Extract(object):
             start_point=start_point
         )
 
-        id = db.quote_column(self._extract.field.last())
+        id = quote_column(self._extract.field.last())
         ids = (
-            "SELECT " + id +
-            " FROM " + self.settings.snowflake.fact_table +
-            " WHERE " + id + " in (" + ",".join(map(db.quote_value, data)) + ")"
+            SQL_SELECT + id +
+            SQL_FROM + self.settings.snowflake.fact_table +
+            SQL_WHERE + id + " in " + sql_iso(sql_list(map(db.quote_value, data)))
         )
         sql = self.schema.get_sql(ids)
         if DEBUG:
@@ -206,36 +206,35 @@ class Extract(object):
         extract = self.settings.extract
         fact_table = self.settings.snowflake.fact_table
 
-        temp_file = File(NamedTemporaryFile(delete=False).name)
-        parent_etl = None
-        for s in start_point:
-            parent_etl = {
-                "id": s,
-                "source": parent_etl
-            }
-        parent_etl["revision"] = get_git_revision()
-        parent_etl["machine"] = machine_metadata
-
-        def append(value, i):
-            """
-            :param value: THE DOCUMENT TO ADD
-            :return: PleaseStop
-            """
-            temp_file.append(convert.value2json({
-                fact_table: elasticsearch.scrub(value),
-                "etl": {
-                    "id": i,
-                    "source": parent_etl,
-                    "timestamp": Date.now()
+        with TempFile() as temp_file:
+            parent_etl = None
+            for s in start_point:
+                parent_etl = {
+                    "id": s,
+                    "source": parent_etl
                 }
-            }))
-        with Timer("assemble data"):
-            self.construct_docs(cursor, append, please_stop)
+            parent_etl["revision"] = get_git_revision()
+            parent_etl["machine"] = machine_metadata
 
-        # WRITE TO S3
-        s3_file_name = ".".join(map(text_type, start_point))
-        with Timer("write to destination"):
-            try:
+            def append(value, i):
+                """
+                :param value: THE DOCUMENT TO ADD
+                :return: PleaseStop
+                """
+                temp_file.append(convert.value2json({
+                    fact_table: elasticsearch.scrub(value),
+                    "etl": {
+                        "id": i,
+                        "source": parent_etl,
+                        "timestamp": Date.now()
+                    }
+                }))
+            with Timer("assemble data"):
+                self.construct_docs(cursor, append, please_stop)
+
+            # WRITE TO S3
+            s3_file_name = ".".join(map(text_type, start_point))
+            with Timer("write to destination"):
                 if not isinstance(self.settings.destination, text_type):
                     destination = self.bucket.get_key(s3_file_name, must_exist=False)
                     destination.write_lines(temp_file)
@@ -243,11 +242,9 @@ class Extract(object):
                     destination = File(self.settings.destination)
                     destination.write(convert.value2json([convert.json2value(o) for o in temp_file], pretty=True))
                     return False
-            finally:
-                temp_file.delete()
 
         # NOTIFY SQS
-        now=Date.now()
+        now = Date.now()
         self.notify.add({
             "bucket": self.settings.destination.bucket,
             "key": s3_file_name,

@@ -32,8 +32,7 @@ from mo_logs.strings import indent
 from mo_logs.strings import outdent
 from mo_math import Math
 from mo_times import Date
-from pyLibrary.sql import SQL, SQL_NULL, SQL_SELECT, SQL_LIMIT, SQL_WHERE, SQL_LEFT_JOIN, SQL_FROM, SQL_AND, sql_list, sql_iso, SQL_ASC, SQL_TRUE, SQL_ONE, SQL_DESC, SQL_IS_NULL, sql_alias
-from pyLibrary.sql.sqlite import join_column
+from pyLibrary.sql import SQL, SQL_NULL, SQL_SELECT, SQL_LIMIT, SQL_WHERE, SQL_LEFT_JOIN, SQL_FROM, SQL_AND, sql_list, sql_iso, SQL_ASC, SQL_TRUE, SQL_ONE, SQL_DESC, SQL_IS_NULL
 
 DEBUG = False
 MAX_BATCH_SIZE = 100
@@ -602,30 +601,9 @@ class MySQL(object):
         except Exception as e:
             Log.error("problem quoting SQL", e)
 
-    def quote_column(self, column_name, table=None):
-        if column_name == None:
-            Log.error("missing column_name")
-        elif isinstance(column_name, text_type):
-            if table:
-                return SQL(self.quote_column(table).rstrip() + "." + self.quote_column(column_name).lstrip())
-            elif _no_need_to_quote.match(column_name):
-                return SQL(" " + column_name + " ")
-            else:
-                return SQL(" `" + column_name.replace("`", "``") + "` ")  # MY SQL QUOTE OF COLUMN NAMES
-        elif isinstance(column_name, list):
-            if table:
-                return sql_list(join_column(table, c) for c in column_name)
-            return sql_list(self.quote_column(c) for c in column_name)
-        else:
-            # ASSUME {"name":name, "value":value} FORM
-            return SQL(sql_alias(column_name.value, self.quote_column(column_name.name)))
-
     def sort2sqlorderby(self, sort):
         sort = jx.normalize_sort_parameters(sort)
         return sql_list([self.quote_column(s.field) + (SQL_DESC if s.sort == -1 else SQL_ASC) for s in sort])
-
-
-_no_need_to_quote = re.compile(r"^\w+$", re.UNICODE)
 
 
 def utf8_to_unicode(v):
@@ -740,6 +718,22 @@ def json_encode(value):
     dicts CAN BE USED AS KEYS
     """
     return text_type(utf8_json_encoder(mo_json.scrub(value)))
+
+
+_no_need_to_quote = re.compile(r"^\w+$", re.UNICODE)
+
+
+def quote_column(column_name, table=None):
+    if column_name == None:
+        Log.error("missing column_name")
+    elif isinstance(column_name, text_type):
+        if table:
+            return SQL(quote_column(table).rstrip() + "." + quote_column(column_name).lstrip())
+        elif _no_need_to_quote.match(column_name):
+            return SQL(" " + column_name + " ")
+        else:
+            return SQL(" `" + column_name.replace("`", "``") + "` ")  # MY SQL QUOTE OF COLUMN NAMES
+    Log.error("no other forms expected")
 
 
 mysql_type_to_json_type = {
