@@ -34,7 +34,7 @@ from pyLibrary.sql.mysql import MySQL, quote_column
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
 
-DEBUG = True
+DEBUG = False
 
 
 class Extract(object):
@@ -197,8 +197,6 @@ class Extract(object):
             SQL_WHERE + id + " in " + sql_iso(sql_list(map(db.quote_value, data)))
         )
         sql = self.schema.get_sql(ids)
-        if DEBUG:
-            Log.note("SQL: {{sql}}", sql=sql)
 
         with Timer("Sending SQL"):
             cursor = db.query(sql, stream=True, row_tuples=True)
@@ -234,7 +232,7 @@ class Extract(object):
 
             # WRITE TO S3
             s3_file_name = ".".join(map(text_type, start_point))
-            with Timer("write to destination"):
+            with Timer("write to destination {{filename}}", param={"filename": s3_file_name}):
                 if not isinstance(self.settings.destination, text_type):
                     destination = self.bucket.get_key(s3_file_name, must_exist=False)
                     destination.write_lines(temp_file)

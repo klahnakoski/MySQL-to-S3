@@ -40,7 +40,9 @@
 		"add_relations": [
 			"treeherder.performance_datum.ds_job_id -> treeherder.job.project_specific_id",
 			"treeherder.performance_datum.repository_id -> treeherder.job.repository_id",
-			"treeherder.job.option_collection_hash -> treeherder.option_collection.option_collection_hash"
+			"treeherder.job.option_collection_hash -> treeherder.option_collection.option_collection_hash",
+			"treeherder.job.failure_classification_id -> treeherder.failure_classification.id",
+			"treeherder.job.autoclassify_status -> treeherder.failure_classification.id"
 		],
 		"include": [
 		],
