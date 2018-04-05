@@ -47,22 +47,25 @@
 		"include": [
 		],
 		"exclude": [
-			"runnable_job",
 			"auth_user",
-			"job_log",
+			"group_failure_lines",
 			"text_log_step",
+			"text_log_error_metadata",
 			"commit",
 			"performance_datum",
 			"performance_alert_summary",
-			"performance_signature"
+			"performance_signature",
+			"runnable_job",
 		],
 		"reference_only": [
-			"user.email",
-			"repository.name",
-			"machine_platform.platform",
+			"classified_failure",
 			"failure_classification.name",
+			"job_group",
+			"machine_platform.platform",
+			"matcher.name",
 			"option.name",
-			"job_group"
+			"repository.name",
+			"user.email",
 		],
 		"database": {
 			"debug": false,
