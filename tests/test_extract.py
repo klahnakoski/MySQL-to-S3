@@ -19,7 +19,7 @@ from mo_times.timer import Timer
 
 from mo_dots import set_default, wrap, Null
 from mysql_to_s3.extract import Extract
-from pyLibrary.sql.mysql import MySQL
+from pyLibrary.sql.mysql import MySQL, execute_file
 
 settings = startup.read_settings(filename="tests/resources/config/test.json")
 constants.set(settings.constants)
@@ -38,7 +38,9 @@ class TestExtract(FuzzyTestCase):
                     pass
                 else:
                     Log.warning("problem removing db", cause=e)
-            MySQL.execute_file("tests/resources/database.sql", schema=None, kwargs=settings.database)
+            execute_file(
+                "tests/resources/database.sql", schema=None, kwargs=settings.database
+            )
 
     def setUp(self):
         pass
@@ -46,7 +48,10 @@ class TestExtract(FuzzyTestCase):
     def test_simple(self):
         config = config_template
         db = MySQL(**config.snowflake.database)
-        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=[22], please_stop=Null)
+        with db:
+            Extract(kwargs=config).extract(
+                db=db, start_point=Null, first_value=Null, data=[22], please_stop=Null
+            )
 
         result = File(filename).read_json()
         result[0].etl = None
@@ -57,7 +62,10 @@ class TestExtract(FuzzyTestCase):
     def test_complex(self):
         config = config_template
         db = MySQL(**config.snowflake.database)
-        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null)
+        with db:
+            Extract(kwargs=config).extract(
+                db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null
+            )
 
         result = File(filename).read_json()
         result[0].etl = None
@@ -67,16 +75,14 @@ class TestExtract(FuzzyTestCase):
 
     def test_inline(self):
         config = set_default(
-            {
-                "snowflake": {"reference_only": [
-                    "inner1.value",
-                    "inner2.value"
-                ]}
-            },
-            config_template
+            {"snowflake": {"reference_only": ["inner1.value", "inner2.value"]}},
+            config_template,
         )
         db = MySQL(**config.snowflake.database)
-        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null)
+        with db:
+            Extract(kwargs=config).extract(
+                db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null
+            )
 
         result = File(filename).read_json()
         result[0].etl = None
@@ -86,13 +92,13 @@ class TestExtract(FuzzyTestCase):
 
     def test_lean(self):
         config = set_default(
-            {
-                "snowflake": {"show_foreign_keys": False}
-            },
-            config_template
+            {"snowflake": {"show_foreign_keys": False}}, config_template
         )
         db = MySQL(**config.snowflake.database)
-        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null)
+        with db:
+            Extract(kwargs=config).extract(
+                db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null
+            )
 
         result = File(filename).read_json()
         result[0].etl = None
@@ -105,16 +111,16 @@ class TestExtract(FuzzyTestCase):
             {
                 "snowflake": {
                     "show_foreign_keys": False,
-                    "reference_only": [
-                        "inner1.value",
-                        "inner2.value"
-                    ]
+                    "reference_only": ["inner1.value", "inner2.value"],
                 }
             },
-            config_template
+            config_template,
         )
         db = MySQL(**config.snowflake.database)
-        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null)
+        with db:
+            Extract(kwargs=config).extract(
+                db=db, start_point=Null, first_value=Null, data=[10], please_stop=Null
+            )
 
         result = File(filename).read_json()
         result[0].etl = None
@@ -128,17 +134,17 @@ class TestExtract(FuzzyTestCase):
                 "extract": {"ids": "select * from fact_table"},
                 "snowflake": {
                     "show_foreign_keys": False,
-                    "reference_only": [
-                        "inner1.value",
-                        "inner2.value"
-                    ]
-                }
+                    "reference_only": ["inner1.value", "inner2.value"],
+                },
             },
-            config_template
+            config_template,
         )
         db = MySQL(**config.snowflake.database)
         data = [10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22]
-        Extract(kwargs=config).extract(db=db, start_point=Null, first_value=Null, data=data, please_stop=Null)
+        with db:
+            Extract(kwargs=config).extract(
+                db=db, start_point=Null, first_value=Null, data=data, please_stop=Null
+            )
 
         result = File(filename).read_json()
         for r in result:
@@ -150,213 +156,228 @@ class TestExtract(FuzzyTestCase):
 
 filename = "tests/output/test_output.json"
 
-config_template = wrap({
-    "extract": {
-        "last": "tests/output/test_run.json",
-        "field": "id",
-        "type": "number",
-        "start": 0,
-        "batch": 100
-    },
-    "destination": filename,
-    "snowflake": {
-        "fact_table": "fact_table",
-        "show_foreign_keys": True,
-        "null_values": [
-            "-",
-            "unknown",
-            ""
-        ],
-        "add_relations": [],
-        "include": [],
-        "exclude": [],
-        "reference_only": [
-            "inner1",
-            "inner2"
-        ],
-        "database": settings.database
-    },
-    "debug": {
-        "trace": True
+config_template = wrap(
+    {
+        "extract": {
+            "last": "tests/output/test_run.json",
+            "field": "id",
+            "type": "number",
+            "start": 0,
+            "batch": 100,
+        },
+        "destination": filename,
+        "snowflake": {
+            "fact_table": "fact_table",
+            "show_foreign_keys": True,
+            "null_values": ["-", "unknown", ""],
+            "add_relations": [],
+            "include": [],
+            "exclude": [],
+            "reference_only": ["inner1", "inner2"],
+            "database": settings.database,
+        },
+        "debug": {"trace": True},
     }
-})
+)
 
 expected_results = {
-    "simple": [{
-        "fact_table": {"id": 22, "name": "L"}
-    }],
-    "lean_inline": [{
-        "fact_table": {
-            "about": "a",
-            "id": 10,
-            "name": "A",
-            "nested1": {
-                "about": 0,
-                "description": "aaa",
-                "nested2": [
-                    {"about": "a", "minutia": 3.1415926539},
-                    {"about": "b", "minutia": 4},
-                    {"about": "c", "minutia": 5.1}
-                ]
+    "simple": [{"fact_table": {"id": 22, "name": "L"}}],
+    "lean_inline": [
+        {
+            "fact_table": {
+                "about": "a",
+                "id": 10,
+                "name": "A",
+                "nested1": {
+                    "about": 0,
+                    "description": "aaa",
+                    "nested2": [
+                        {"about": "a", "minutia": 3.1415926539},
+                        {"about": "b", "minutia": 4},
+                        {"about": "c", "minutia": 5.1},
+                    ],
+                },
             }
         }
-    }],
-    "lean": [{
-        "fact_table": {
-            "about": {"value": "a", "time": {"value": 0}},
-            "id": 10,
-            "name": "A",
-            "nested1": {
-                "about": {"value": 0},
-                "description": "aaa",
-                "nested2": [
-                    {
-                        "about": {"value": "a", "time": {"value": 0}},
-                        "minutia": 3.1415926539
-                    },
-                    {"about": {"value": "b"}, "minutia": 4},
-                    {"about": {"value": "c"}, "minutia": 5.1}
-                ]
+    ],
+    "lean": [
+        {
+            "fact_table": {
+                "about": {"value": "a", "time": {"value": 0}},
+                "id": 10,
+                "name": "A",
+                "nested1": {
+                    "about": {"value": 0},
+                    "description": "aaa",
+                    "nested2": [
+                        {
+                            "about": {"value": "a", "time": {"value": 0}},
+                            "minutia": 3.1415926539,
+                        },
+                        {"about": {"value": "b"}, "minutia": 4},
+                        {"about": {"value": "c"}, "minutia": 5.1},
+                    ],
+                },
+            }
+        }
+    ],
+    "complex": [
+        {
+            "fact_table": {
+                "about": {"id": 1, "time": {"id": -1, "value": 0}, "value": "a"},
+                "id": 10,
+                "name": "A",
+                "nested1": {
+                    "about": {"id": -1, "value": 0},
+                    "description": "aaa",
+                    "id": 100,
+                    "nested2": [
+                        {
+                            "about": {
+                                "id": 1,
+                                "time": {"id": -1, "value": 0},
+                                "value": "a",
+                            },
+                            "id": 1000,
+                            "minutia": 3.1415926539,
+                            "ref": 100,
+                        },
+                        {
+                            "about": {"id": 2, "time": {"id": -2}, "value": "b"},
+                            "id": 1001,
+                            "minutia": 4,
+                            "ref": 100,
+                        },
+                        {
+                            "about": {"id": 3, "value": "c"},
+                            "id": 1002,
+                            "minutia": 5.1,
+                            "ref": 100,
+                        },
+                    ],
+                    "ref": 10,
+                },
+            }
+        }
+    ],
+    "inline": [
+        {
+            "fact_table": {
+                "about": {"id": 1, "value": "a"},
+                "id": 10,
+                "name": "A",
+                "nested1": {
+                    "about": {"id": -1, "value": 0},
+                    "ref": 10,
+                    "description": "aaa",
+                    "nested2": [
+                        {
+                            "about": {"id": 1, "value": "a"},
+                            "ref": 100,
+                            "id": 1000,
+                            "minutia": 3.1415926539,
+                        },
+                        {
+                            "about": {"id": 2, "value": "b"},
+                            "ref": 100,
+                            "id": 1001,
+                            "minutia": 4,
+                        },
+                        {
+                            "about": {"id": 3, "value": "c"},
+                            "ref": 100,
+                            "id": 1002,
+                            "minutia": 5.1,
+                        },
+                    ],
+                    "id": 100,
+                },
+            }
+        }
+    ],
+    "lean_inline_all": [
+        {
+            "fact_table": {
+                "nested1": {
+                    "about": 0,
+                    "description": "aaa",
+                    "nested2": [
+                        {"about": "a", "minutia": 3.1415926539},
+                        {"about": "b", "minutia": 4},
+                        {"about": "c", "minutia": 5.1},
+                    ],
+                },
+                "about": "a",
+                "id": 10,
+                "name": "A",
             }
         },
-    }],
-    "complex": [{"fact_table": {
-        "about": {"id": 1, "time": {"id": -1, "value": 0}, "value": "a"},
-        "id": 10,
-        "name": "A",
-        "nested1": {
-            "about": {"id": -1, "value": 0},
-            "description": "aaa",
-            "id": 100,
-            "nested2": [
-                {
-                    "about": {"id": 1, "time": {"id": -1, "value": 0}, "value": "a"},
-                    "id": 1000,
-                    "minutia": 3.1415926539,
-                    "ref": 100
+        {
+            "fact_table": {
+                "nested1": {
+                    "description": "bbb",
+                    "nested2": {"about": "a", "minutia": 6.2},
                 },
-                {
-                    "about": {"id": 2, "time": {"id": -2}, "value": "b"},
-                    "id": 1001,
-                    "minutia": 4,
-                    "ref": 100
-                },
-                {
-                    "about": {"id": 3, "value": "c"},
-                    "id": 1002,
-                    "minutia": 5.1,
-                    "ref": 100
-                }
-            ],
-            "ref": 10
-        }
-    }}],
-    "inline": [{
-        "fact_table": {
-            "about": {"id": 1, "value": "a"},
-            "id": 10,
-            "name": "A",
-            "nested1": {
-                "about": {"id": -1, "value": 0},
-                "ref": 10,
-                "description": "aaa",
-                "nested2": [
-                    {
-                        "about": {"id": 1, "value": "a"},
-                        "ref": 100,
-                        "id": 1000,
-                        "minutia": 3.1415926539
-                    },
-                    {
-                        "about": {"id": 2, "value": "b"},
-                        "ref": 100,
-                        "id": 1001,
-                        "minutia": 4
-                    },
-                    {
-                        "about": {"id": 3, "value": "c"},
-                        "ref": 100,
-                        "id": 1002,
-                        "minutia": 5.1
-                    }
-                ],
-                "id": 100
+                "about": "b",
+                "id": 11,
+                "name": "B",
             }
-        }
-    }],
-    "lean_inline_all": [
-        {"fact_table": {
-            "nested1": {
-                "about": 0,
-                "description": "aaa",
-                "nested2": [
-                    {"about": "a", "minutia": 3.1415926539},
-                    {"about": "b", "minutia": 4},
-                    {"about": "c", "minutia": 5.1}
-                ]
-            },
-            "about": "a",
-            "id": 10,
-            "name": "A"
-        }},
-        {"fact_table": {
-            "nested1": {
-                "description": "bbb",
-                "nested2": {"about": "a", "minutia": 6.2}
-            },
-            "about": "b",
-            "id": 11,
-            "name": "B"
-        }},
-        {"fact_table": {
-            "nested1": {
-                "description": "ccc",
-                "nested2": {"about": "c", "minutia": 7.3}
-            },
-            "about": "c",
-            "id": 12,
-            "name": "C"
-        }},
-        {"fact_table": {
-            "nested1": {"about": 0, "description": "ddd"},
-            "id": 13,
-            "name": "D"
-        }},
-        {"fact_table": {
-            "nested1": [
-                {"about": 0, "description": "eee"},
-                {"about": 0, "description": "fff"}
-            ],
-            "about": "a",
-            "id": 15,
-            "name": "E"
-        }},
-        {"fact_table": {
-            "nested1": [{"description": "ggg"}, {"description": "hhh"}],
-            "about": "b",
-            "id": 16,
-            "name": "F"
-        }},
-        {"fact_table": {
-            "nested1": [{"description": "iii"}, {"description": "jjj"}],
-            "about": "c",
-            "id": 17,
-            "name": "G"
-        }},
-        {"fact_table": {
-            "nested1": [{"description": "kkk"}, {"description": "lll"}],
-            "id": 18,
-            "name": "H"
-        }},
+        },
+        {
+            "fact_table": {
+                "nested1": {
+                    "description": "ccc",
+                    "nested2": {"about": "c", "minutia": 7.3},
+                },
+                "about": "c",
+                "id": 12,
+                "name": "C",
+            }
+        },
+        {
+            "fact_table": {
+                "nested1": {"about": 0, "description": "ddd"},
+                "id": 13,
+                "name": "D",
+            }
+        },
+        {
+            "fact_table": {
+                "nested1": [
+                    {"about": 0, "description": "eee"},
+                    {"about": 0, "description": "fff"},
+                ],
+                "about": "a",
+                "id": 15,
+                "name": "E",
+            }
+        },
+        {
+            "fact_table": {
+                "nested1": [{"description": "ggg"}, {"description": "hhh"}],
+                "about": "b",
+                "id": 16,
+                "name": "F",
+            }
+        },
+        {
+            "fact_table": {
+                "nested1": [{"description": "iii"}, {"description": "jjj"}],
+                "about": "c",
+                "id": 17,
+                "name": "G",
+            }
+        },
+        {
+            "fact_table": {
+                "nested1": [{"description": "kkk"}, {"description": "lll"}],
+                "id": 18,
+                "name": "H",
+            }
+        },
         {"fact_table": {"about": "a", "id": 19, "name": "I"}},
         {"fact_table": {"about": "b", "id": 20, "name": "J"}},
         {"fact_table": {"about": "c", "id": 21, "name": "K"}},
-        {"fact_table": {"id": 22, "name": "L"}}
-    ]
+        {"fact_table": {"id": 22, "name": "L"}},
+    ],
 }
-
-
-
-
-
-

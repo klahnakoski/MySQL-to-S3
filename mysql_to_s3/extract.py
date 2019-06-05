@@ -134,7 +134,7 @@ class Extract(object):
                         filename=self.settings.extract.last,
                     )
                     first_value = list(
-                        (listwrap(content[0]) + DUMMY_LIST)[: len(self._extract.type) :]
+                        (listwrap(content[0]) + DUMMY_LIST)[: len(self._extract.type):]
                     )
                     start_point = tuple(first_value)
                     #     Date(s) + Duration(b) * c if t == 'time' else s + b * c
@@ -235,9 +235,9 @@ class Extract(object):
                         + db.quote_value(Date(v) if t == "time" else v)
                         for e, (f, v, t) in enumerate(
                             zip(
-                                self._extract.field[0 : i + 1 :],
+                                self._extract.field[0: i + 1:],
                                 first,
-                                self._extract.type[0 : i + 1 :],
+                                self._extract.type[0: i + 1:],
                             )
                         )
                     )
@@ -310,7 +310,7 @@ class Extract(object):
         fact_table = self.settings.snowflake.fact_table
 
         with TempFile() as temp_file:
-            parent_etl = None
+            parent_etl = Null
             for s in start_point:
                 parent_etl = {"id": s, "source": parent_etl}
             parent_etl["revision"] = get_revision()
@@ -387,7 +387,9 @@ class Extract(object):
         columns = tuple(wrap(c) for c in self.schema.columns)
         with Timer("Downloading from MySQL"):
             curr_record = Null
-            for rownum, row in enumerate(cursor):
+            rownum = 0
+            for row in cursor:
+                rownum += 1
                 if please_stop:
                     Log.error("Got `please_stop` signal")
 
