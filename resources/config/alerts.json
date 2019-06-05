@@ -27,7 +27,7 @@
 //		"$ref": "file://~/private.json#aws_credentials"
 //	},
 	"snowflake": {
-		"fact_table": "performance_alert_summary",
+		"fact_table": "performance_alert",
 		"show_foreign_keys": false,
 		"null_values": [
 			"-",
@@ -56,6 +56,7 @@
 			"performance_datum.signature_id"
 		],
 		"exclude_path":[
+			"related_summary.details",
 			"series_signature.parent_signature",
 			"series_signature.performance_datum",
 			"performance_signature.performance_alert_summary"
