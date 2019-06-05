@@ -14,27 +14,26 @@ from __future__ import unicode_literals
 
 from contextlib import closing
 
-from mo_future import text_type
-
+from jx_base.expressions import last
 from jx_python import jx
-from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce
+from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce, is_data
 from mo_files import File, TempFile
+from mo_future import text_type, transpose
 from mo_kwargs import override
 from mo_logs import Log, startup, constants, machine_metadata
-from mo_threads import Signal, Thread, Queue, THREAD_STOP
+from mo_threads import Signal, Thread, Queue, THREAD_STOP, MainThread
 from mo_times import Date, Duration, DAY
 from mo_times.timer import Timer
+from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
+from mysql_to_s3.snowflake_schema import SnowflakeSchema
 from pyLibrary import convert, aws
 from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
-from pyLibrary.env.git import get_git_revision
-from pyLibrary.sql import SQL, sql_list, SQL_LIMIT, SQL_ORDERBY, SQL_WHERE, SQL_FROM, SQL_SELECT, SQL_AND, SQL_OR, sql_and, sql_iso, sql_alias, SQL_TRUE
+from pyLibrary.env.git import get_revision
+from pyLibrary.sql import SQL, sql_list, SQL_LIMIT, SQL_ORDERBY, SQL_WHERE, SQL_FROM, SQL_SELECT, SQL_OR, sql_and, sql_iso, sql_alias, SQL_TRUE, SQL_AND
 from pyLibrary.sql.mysql import MySQL, quote_column
 
-from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
-from mysql_to_s3.snowflake_schema import SnowflakeSchema
-
-DEBUG = False
+DEBUG = True
 
 
 class Extract(object):
@@ -46,7 +45,7 @@ class Extract(object):
         self._extract = extract = kwargs.extract
 
         # SOME PREP
-        get_git_revision()
+        get_revision()
 
         # VERIFY WE DO NOT HAVE TOO MANY OTHER PROCESSES WORKING ON STUFF
         with MySQL(**kwargs.snowflake.database) as db:
@@ -87,8 +86,11 @@ class Extract(object):
         self.done_pulling = Signal()
         self.queue = Queue("all batches", max=2 * coalesce(extract.threads, 1), silent=True)
 
-        self.bucket = s3.Bucket(self.settings.destination)
-        self.notify = aws.Queue(self.settings.notify)
+        if self.settings.notify:
+            self.notify = aws.Queue(self.settings.notify)
+        else:
+            self.notify = Null
+
         Thread.run("get records", self.pull_all_remaining)
 
     def pull_all_remaining(self, please_stop):
@@ -97,15 +99,22 @@ class Extract(object):
                 content = File(self.settings.extract.last).read_json()
                 if len(content) == 1:
                     Log.note("Got a manually generated file {{filename}}", filename=self.settings.extract.last)
-                    start_point = tuple(content[0])
-                    first_value = [self._extract.start[0] + (start_point[0] * DAY), start_point[1]]
+                    first_value = list((listwrap(content[0])+DUMMY_LIST)[:len(self._extract.type):])
+                    start_point = tuple(first_value)
+                    #     Date(s) + Duration(b) * c if t == 'time' else s + b * c
+                    #     for t, b, s, c in zip(self._extract.type, self._extract.batch, self._extract.start, first_value)
+                    # )
                 else:
                     Log.note("Got a machine generated file {{filename}}", filename=self.settings.extract.last)
                     start_point, first_value = content
                     start_point = tuple(start_point)
-                Log.note("First value is {{start1|date}}, {{start2}}", start1=first_value[0], start2=first_value[1])
-            except Exception as _:
-                Log.error("Expecting a file {{filename}} with the last good S3 bucket etl id in array form eg: [[954, 0]]", filename=self.settings.extract.last)
+                Log.note("First value is {{start|json}}", start=first_value)
+            except Exception as e:
+                Log.error(
+                    "Expecting a file {{filename}} with the last good S3 bucket etl id in array form eg: [[954, 0]]",
+                    filename=self.settings.extract.last,
+                    cause=e
+                )
                 start_point = tuple(self._extract.start)
                 first_value = Null
 
@@ -113,19 +122,20 @@ class Extract(object):
             for t, s, b, f, i in reversed(zip(self._extract.type, self._extract.start, self._extract.batch, listwrap(first_value)+DUMMY_LIST, range(len(self._extract.start)))):
                 if t == "time":
                     counter = DurationCounter(start=s, duration=b, child=counter)
-                    first_value[i] = Date(f)
+                    first_value[i] = Date(s) + Duration(b) * f
                 else:
                     counter = BatchCounter(start=s, size=b, child=counter)
 
             batch_size = self._extract.batch.last() * 2 * self.settings.extract.threads
             with MySQL(**self.settings.snowflake.database) as db:
                 while not please_stop:
-                    sql = self._build_list_sql(db, first_value, batch_size + 1)
+                    sql = self._build_list_sql(db, first_value, batch_size + self._extract.batch.last())
                     pending = []
                     counter.reset(start_point)
                     with Timer("Grab a block of ids for processing"):
                         with closing(db.db.cursor()) as cursor:
                             acc = []
+                            Log.note("SQL: {{sql}}", sql=sql)
                             cursor.execute(sql)
                             count = 0
                             for row in cursor:
@@ -167,6 +177,14 @@ class Extract(object):
         else:
             where = SQL_TRUE
 
+        # ADD QUERY LIMIT - FOR CHUNKS THIS IS A SIMPLE LIMIT
+        # DURATIONS REQUIRE A WHERE CLAUSE
+        if last(self._extract.type) != 'time':
+            limit = SQL_LIMIT + db.quote_value(batch_size)
+        else:
+            where += SQL_AND + quote_column(last(self._extract.field)) + " < " + db.quote_value((Date(last(first)) + Duration(batch_size)))
+            limit = ""
+
         selects = []
         for t, f in zip(self._extract.type, self._extract.field):
             if t == "time":
@@ -178,8 +196,9 @@ class Extract(object):
             SQL_FROM + self.settings.snowflake.fact_table +
             SQL_WHERE + where +
             SQL_ORDERBY + sql_list(quote_column(f) for f in self._extract.field) +
-            SQL_LIMIT + db.quote_value(batch_size)
+            limit
         )
+
         return sql
 
     def extract(self, db, start_point, first_value, data, please_stop):
@@ -211,7 +230,7 @@ class Extract(object):
                     "id": s,
                     "source": parent_etl
                 }
-            parent_etl["revision"] = get_git_revision()
+            parent_etl["revision"] = get_revision()
             parent_etl["machine"] = machine_metadata
 
             def append(value, i):
@@ -230,14 +249,15 @@ class Extract(object):
             with Timer("assemble data"):
                 self.construct_docs(cursor, append, please_stop)
 
-            # WRITE TO S3
             s3_file_name = ".".join(map(text_type, start_point))
             with Timer("write to destination {{filename}}", param={"filename": s3_file_name}):
                 if not isinstance(self.settings.destination, text_type):
+                    # WRITE JSON LINES TO S3
                     destination = self.bucket.get_key(s3_file_name, must_exist=False)
                     destination.write_lines(temp_file)
                 else:
-                    destination = File(self.settings.destination)
+                    # WRITE PRETTY JSON TO FILE
+                    destination = File(self.settings.destination).add_suffix(s3_file_name)
                     destination.write(convert.value2json([convert.json2value(o) for o in temp_file], pretty=True))
                     return False
 
@@ -344,7 +364,7 @@ def main():
                 Thread.run("extract #"+text_type(i), extract)
 
             please_stop = Signal()
-            Thread.wait_for_shutdown_signal(please_stop=please_stop, allow_exit=True, wait_forever=False)
+            Thread.current().wait_for_shutdown_signal(please_stop=please_stop, allow_exit=True, wait_forever=False)
     except Exception as e:
         Log.warning("Problem with data extraction", e)
     finally:

@@ -15,7 +15,7 @@
 			0
 		],
 		"batch": [
-			"day",
+			"week",
 			1000
 		]
 	},
@@ -55,7 +55,7 @@
 			"performance_datum",
 			"performance_alert_summary",
 			"performance_signature",
-			"runnable_job",
+			"runnable_job"
 		],
 		"reference_only": [
 			"classified_failure",
@@ -65,7 +65,7 @@
 			"matcher.name",
 			"option.name",
 			"repository.name",
-			"user.email",
+			"user.email"
 		],
 		"database": {
 			"debug": false,

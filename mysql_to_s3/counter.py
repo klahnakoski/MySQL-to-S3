@@ -13,9 +13,8 @@ from __future__ import division
 from __future__ import unicode_literals
 
 from mo_logs import Log
-from mo_math import Math
 from mo_times import Date, Duration
-
+from mo_math import round
 
 class Counter(object):
     def __init__(self, start):
@@ -70,7 +69,7 @@ class DurationCounter(object):
             Log.error("Expecting strictly increasing")
         self.last_value = v
 
-        key = Math.round((v.floor(self.duration)-self.start)/self.duration, decimal=0)
+        key = round((v.floor(self.duration)-self.start)/self.duration, decimal=0)
         if key != self.batch:
             self.child.reset()
             self.batch = key

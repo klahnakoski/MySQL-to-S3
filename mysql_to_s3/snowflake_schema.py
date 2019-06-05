@@ -16,14 +16,13 @@ from copy import deepcopy, copy
 
 from jx_python import jx
 from mo_collections import UniqueIndex
-from mo_dots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field
+from mo_dots import coalesce, Data, wrap, Null, FlatList, unwrap, join_field, split_field, relative_field, concat_field, literal_field, set_default, startswith_field, listwrap
 from mo_future import text_type
 from mo_kwargs import override
 from mo_logs import Log, strings
 from mo_logs.exceptions import Explanation
 from mo_math.randoms import Random
-from mo_times.timer import Timer
-from pyLibrary.sql import SQL_SELECT, sql_list, sql_alias, SQL_NULL, sql_iso, SQL_FROM, SQL_LEFT_JOIN, sql_and, SQL_ON, SQL_JOIN, SQL_UNION_ALL, SQL_ORDERBY, SQL_STAR, SQL_IS_NOT_NULL
+from pyLibrary.sql import SQL_SELECT, sql_list, sql_alias, SQL_NULL, sql_iso, SQL_FROM, SQL_LEFT_JOIN, sql_and, SQL_ON, SQL_JOIN, SQL_UNION_ALL, SQL_ORDERBY, SQL_STAR, SQL_IS_NOT_NULL, SQL
 from pyLibrary.sql.mysql import MySQL, quote_column
 
 DEBUG = False
@@ -34,7 +33,8 @@ class SnowflakeSchema(object):
     @override
     def __init__(self, kwargs=None):
         self.settings = kwargs
-        self.settings.exclude = set(self.settings.exclude)
+        self.settings.exclude = set(listwrap(self.settings.exclude))
+        self.settings.exclude_path = list(map(split_field, listwrap(self.settings.exclude_path)))
         self.settings.show_foreign_keys = coalesce(self.settings.show_foreign_keys, True)
 
         self.all_nested_paths = None
@@ -66,6 +66,13 @@ class SnowflakeSchema(object):
             SQL_ORDERBY + sql_list(sort)
         )
         return union_all_sql
+
+    def path_not_allowed(self, path):
+        return path != '.' and any(
+            path_in_path(e, p)
+            for p in [split_field(path)]
+            for e in self.settings.exclude_path
+        )
 
     def _scan_database(self):
         # GET ALL RELATIONS
@@ -288,6 +295,9 @@ class SnowflakeSchema(object):
         def follow_paths(position, path, nested_path, done_relations, no_nested_docs):
             if position.name in self.settings.exclude:
                 return
+
+            if self.path_not_allowed(path):
+                return
             if DEBUG:
                 Log.note("Trace {{path}}", path=path)
             if position.name != "__ids__":
@@ -426,10 +436,20 @@ class SnowflakeSchema(object):
                     if not (many_table - self.settings.exclude):
                         continue
 
-                    referenced_column_path = join_field(split_field(path) + ["/".join(many_table)])
+                    relation_string = one_to_many_string(constraint_columns[0])
+                    step = "/".join(many_table)
+                    if len(constraint_columns) == 1:
+                        step = coalesce(self.settings.name_relations[relation_string], step)
+
+                    referenced_column_path = concat_field(path, step)
+                    if self.path_not_allowed(referenced_column_path):
+                        continue
+
                     new_nested_path = [referenced_column_path] + nested_path
                     all_nested_paths.append(new_nested_path)
 
+                    if referenced_column_path in nested_path_to_join:
+                        Log.error("{{path}} already exists, try adding entry to name_relations", path=referenced_column_path)
                     # if new_path not in self.settings.include:
                     #     Log.note("Exclude nested path {{path}}", path=new_path)
                     #     continue
@@ -575,6 +595,37 @@ class SnowflakeSchema(object):
                     selects.append(sql_alias(SQL_NULL,  quote_column(c.column_alias)))
 
             if not_null_column_seen:
-                sql.append(SQL_SELECT + sql_list(selects) + "".join(sql_joins))
+                sql.append(SQL_SELECT + sql_list(selects) + SQL("").join(sql_joins))
         return sql
 
+
+
+def full_name_string(column):
+    return join_field([literal_field(column.table.name), literal_field(column.column.name)])
+
+
+def one_to_many_string(constraint):
+    ref = constraint.referenced
+
+    return full_name_string(ref) + ' <- ' + full_name_string(constraint)
+
+
+def many_to_one_string(constraint):
+    ref = constraint.referenced
+
+    return full_name_string(constraint) + ' -> ' + full_name_string(ref)
+
+
+
+def path_in_path(sub_path, full_path):
+    max_length = len(full_path)
+    for i, p in enumerate(full_path):
+        for j, pp in enumerate(sub_path):
+            ii = i + j
+            if ii >= max_length:
+                break
+            if full_path[i + j] != pp:
+                break
+        else:
+            return True
+    return False

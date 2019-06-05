@@ -33,8 +33,8 @@ Controls the what records get pulled, the size of the batch, and how to name tho
 		"batch":["day",1000]
 	}
 
-* **`threads`** - *integer* - number of threads used to process documents. Use 1 if you are debugging.
-* **`last`** - *string* - the name of the file to store the first record of the next batch
+* **`threads`** - `integer` - number of threads used to process documents. Use 1 if you are debugging.
+* **`last`** - `string` - the name of the file to store the first record of the next batch
 * **`field`** - `strings` - Field to track between extracts; it should be a timestamp, or constantly increasing value, that can help find all changes since the last run. This extract program will record the maximum value seen to the file system so subsequent runs can continue where it left off.
 * **`type`** - `strings` - The type of field (either `time` or `number`)
 * **`start`** - `strings` - The minimum value for the field expected. Used to start a new extract, and used to know what value to assign to zero
@@ -103,7 +103,9 @@ The `snowflake` object limits the relational walk used to determine the JSON doc
 * **`show_foreign_keys`** - *default true* - Include the foreign key ids. This is useful if you require those ids for later synchronization. If you are only interested in the relationships, then they can be left out, and the JSON will be simpler.
 * **`null_values`** - Some databases use a variety of values that indicate *no value*. The database `NULL` is always considered missing, and these values are mapped to `NULL` too.
 * **`add_relations`** -  Relations are important for the denormalization. If your database is missing relations, you can add them here. They must be in `<schema>.<table>.<column>` form. Most missing relations are ones that cross schema boundaries; **MySQL-to-S3** can reach across those boundaries for complete denormalization.
+* **`name_relations`** - By default many-to-one relations use the column name for the property, while one-to-many relations use the referenced table name. You can change this to more convenient names, or remove ambiguity by adding relations and their respective names. Use `->` for many-to-one and `<-` for one-to-many.
 * **`exclude`** - Some tables are not needed: They may be irrelevant for the extraction process, or they may contain sensitive information, or you may not have permissions to access the contents. In all these cases, the tables can be added to this list. For the Treeherder example, there are many `exclude` entries; this is to avoid pulling the Perfherder facts, which we pull using separate configuration.
+* **`exclude_path`** - Some paths lead to lookup table pointed to by other facts. These facts are desired, just not in this path. This also excludes subpaths.
 * **`reference_only`** - *`<table>.<column>`* - Some tables are used to lookup primitive values, or maybe you are not interested in the properties for a given table: In these cases you can have the foreign key replaced with the canonical value that foreign key represents. For example: `user_id` refers to the `users` table, which has a `email` column. Everywhere there is a `user_id` column, the foreign key is replaced with the `email` value. This greatly simplifies the JSON at the risk of loosing some information. 
 * **`reference_only`** - *`<table>`* - If just the table is named, then it is included with all its columns, but no nested documents will be attached to it, or any of its inner objects.   
 * **`database`** - properties required to connect to the database. Must include `schema` so that the `fact_table` name has context.
