@@ -16,7 +16,16 @@ from contextlib import closing
 
 from jx_base.expressions import last
 from jx_python import jx
-from mo_dots import Data, wrap, Null, listwrap, unwrap, relative_field, coalesce, is_data
+from mo_dots import (
+    Data,
+    wrap,
+    Null,
+    listwrap,
+    unwrap,
+    relative_field,
+    coalesce,
+    is_data,
+)
 from mo_files import File, TempFile
 from mo_future import text_type, transpose
 from mo_kwargs import override
@@ -30,14 +39,27 @@ from pyLibrary import convert, aws
 from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_revision
-from pyLibrary.sql import SQL, sql_list, SQL_LIMIT, SQL_ORDERBY, SQL_WHERE, SQL_FROM, SQL_SELECT, SQL_OR, sql_and, sql_iso, sql_alias, SQL_TRUE, SQL_AND
+from pyLibrary.sql import (
+    SQL,
+    sql_list,
+    SQL_LIMIT,
+    SQL_ORDERBY,
+    SQL_WHERE,
+    SQL_FROM,
+    SQL_SELECT,
+    SQL_OR,
+    sql_and,
+    sql_iso,
+    sql_alias,
+    SQL_TRUE,
+    SQL_AND,
+)
 from pyLibrary.sql.mysql import MySQL, quote_column
 
 DEBUG = True
 
 
 class Extract(object):
-
     @override
     def __init__(self, kwargs=None):
         self.settings = kwargs
@@ -53,10 +75,12 @@ class Extract(object):
             try:
                 processes = jx.filter(
                     db.query("show processlist"),
-                    {"and": [
-                        {"neq": {"Command": "Sleep"}},
-                        {"neq": {"Info": "show processlist"}}
-                    ]}
+                    {
+                        "and": [
+                            {"neq": {"Command": "Sleep"}},
+                            {"neq": {"Info": "show processlist"}},
+                        ]
+                    },
                 )
             except Exception as e:
                 Log.warning("no database", cause=e)
@@ -71,8 +95,13 @@ class Extract(object):
         extract.start = listwrap(extract.start)
         extract.batch = listwrap(extract.batch)
         extract.field = listwrap(extract.field)
-        if any(len(extract.type) != len(other) for other in [extract.start, extract.batch, extract.field]):
-            Log.error("Expecting same number of dimensions for `type`, `start`, `batch`, and `field` in the `extract` inner object")
+        if any(
+            len(extract.type) != len(other)
+            for other in [extract.start, extract.batch, extract.field]
+        ):
+            Log.error(
+                "Expecting same number of dimensions for `type`, `start`, `batch`, and `field` in the `extract` inner object"
+            )
         for i, t in enumerate(extract.type):
             if t == "time":
                 extract.start[i] = Date(extract.start[i])
@@ -84,7 +113,9 @@ class Extract(object):
 
         extract.threads = coalesce(extract.threads, 1)
         self.done_pulling = Signal()
-        self.queue = Queue("all batches", max=2 * coalesce(extract.threads, 1), silent=True)
+        self.queue = Queue(
+            "all batches", max=2 * coalesce(extract.threads, 1), silent=True
+        )
 
         if self.settings.notify:
             self.notify = aws.Queue(self.settings.notify)
@@ -98,14 +129,22 @@ class Extract(object):
             try:
                 content = File(self.settings.extract.last).read_json()
                 if len(content) == 1:
-                    Log.note("Got a manually generated file {{filename}}", filename=self.settings.extract.last)
-                    first_value = list((listwrap(content[0])+DUMMY_LIST)[:len(self._extract.type):])
+                    Log.note(
+                        "Got a manually generated file {{filename}}",
+                        filename=self.settings.extract.last,
+                    )
+                    first_value = list(
+                        (listwrap(content[0]) + DUMMY_LIST)[: len(self._extract.type) :]
+                    )
                     start_point = tuple(first_value)
                     #     Date(s) + Duration(b) * c if t == 'time' else s + b * c
                     #     for t, b, s, c in zip(self._extract.type, self._extract.batch, self._extract.start, first_value)
                     # )
                 else:
-                    Log.note("Got a machine generated file {{filename}}", filename=self.settings.extract.last)
+                    Log.note(
+                        "Got a machine generated file {{filename}}",
+                        filename=self.settings.extract.last,
+                    )
                     start_point, first_value = content
                     start_point = tuple(start_point)
                 Log.note("First value is {{start|json}}", start=first_value)
@@ -113,13 +152,21 @@ class Extract(object):
                 Log.error(
                     "Expecting a file {{filename}} with the last good S3 bucket etl id in array form eg: [[954, 0]]",
                     filename=self.settings.extract.last,
-                    cause=e
+                    cause=e,
                 )
                 start_point = tuple(self._extract.start)
                 first_value = Null
 
             counter = Counter(start=0)
-            for t, s, b, f, i in reversed(zip(self._extract.type, self._extract.start, self._extract.batch, listwrap(first_value)+DUMMY_LIST, range(len(self._extract.start)))):
+            for t, s, b, f, i in reversed(
+                zip(
+                    self._extract.type,
+                    self._extract.start,
+                    self._extract.batch,
+                    listwrap(first_value) + DUMMY_LIST,
+                    range(len(self._extract.start)),
+                )
+            ):
                 if t == "time":
                     counter = DurationCounter(start=s, duration=b, child=counter)
                     first_value[i] = Date(s) + Duration(b) * f
@@ -129,7 +176,9 @@ class Extract(object):
             batch_size = self._extract.batch.last() * 2 * self.settings.extract.threads
             with MySQL(**self.settings.snowflake.database) as db:
                 while not please_stop:
-                    sql = self._build_list_sql(db, first_value, batch_size + self._extract.batch.last())
+                    sql = self._build_list_sql(
+                        db, first_value, batch_size + self._extract.batch.last()
+                    )
                     pending = []
                     counter.reset(start_point)
                     with Timer("Grab a block of ids for processing"):
@@ -145,13 +194,24 @@ class Extract(object):
                                 if key != start_point:
                                     if first_value:
                                         if not acc:
-                                            Log.error("not expected, {{filename}} is probably set too far in the past", filename=self.settings.extract.last)
-                                        pending.append({"start_point": start_point, "first_value": first_value, "data": acc})
+                                            Log.error(
+                                                "not expected, {{filename}} is probably set too far in the past",
+                                                filename=self.settings.extract.last,
+                                            )
+                                        pending.append(
+                                            {
+                                                "start_point": start_point,
+                                                "first_value": first_value,
+                                                "data": acc,
+                                            }
+                                        )
                                     acc = []
                                     start_point = key
                                     first_value = row
-                                acc.append(row[-1])  # ASSUME LAST COLUMN IS THE FACT TABLE id
-                    Log.note("adding {{num}} for processing",  num=len(pending))
+                                acc.append(
+                                    row[-1]
+                                )  # ASSUME LAST COLUMN IS THE FACT TABLE id
+                    Log.note("adding {{num}} for processing", num=len(pending))
                     self.queue.extend(pending)
 
                     if count < batch_size:
@@ -168,10 +228,20 @@ class Extract(object):
         if first:
             dim = len(self._extract.field)
             where = SQL_OR.join(
-                sql_iso(sql_and(
-                    quote_column(f) + ineq(i, e, dim) + db.quote_value(Date(v) if t=="time" else v)
-                    for e, (f, v, t) in enumerate(zip(self._extract.field[0:i + 1:], first, self._extract.type[0:i+1:]))
-                ))
+                sql_iso(
+                    sql_and(
+                        quote_column(f)
+                        + ineq(i, e, dim)
+                        + db.quote_value(Date(v) if t == "time" else v)
+                        for e, (f, v, t) in enumerate(
+                            zip(
+                                self._extract.field[0 : i + 1 :],
+                                first,
+                                self._extract.type[0 : i + 1 :],
+                            )
+                        )
+                    )
+                )
                 for i in range(dim)
             )
         else:
@@ -179,24 +249,35 @@ class Extract(object):
 
         # ADD QUERY LIMIT - FOR CHUNKS THIS IS A SIMPLE LIMIT
         # DURATIONS REQUIRE A WHERE CLAUSE
-        if last(self._extract.type) != 'time':
+        if last(self._extract.type) != "time":
             limit = SQL_LIMIT + db.quote_value(batch_size)
         else:
-            where += SQL_AND + quote_column(last(self._extract.field)) + " < " + db.quote_value((Date(last(first)) + Duration(batch_size)))
+            where += (
+                SQL_AND
+                + quote_column(last(self._extract.field))
+                + " < "
+                + db.quote_value((Date(last(first)) + Duration(batch_size)))
+            )
             limit = ""
 
         selects = []
         for t, f in zip(self._extract.type, self._extract.field):
             if t == "time":
-                selects.append("CAST"+sql_iso(sql_alias(quote_column(f), SQL("DATETIME(6)"))))
+                selects.append(
+                    "CAST" + sql_iso(sql_alias(quote_column(f), SQL("DATETIME(6)")))
+                )
             else:
                 selects.append(quote_column(f))
         sql = (
-            SQL_SELECT + sql_list(selects) +
-            SQL_FROM + self.settings.snowflake.fact_table +
-            SQL_WHERE + where +
-            SQL_ORDERBY + sql_list(quote_column(f) for f in self._extract.field) +
-            limit
+            SQL_SELECT
+            + sql_list(selects)
+            + SQL_FROM
+            + self.settings.snowflake.fact_table
+            + SQL_WHERE
+            + where
+            + SQL_ORDERBY
+            + sql_list(quote_column(f) for f in self._extract.field)
+            + limit
         )
 
         return sql
@@ -206,14 +287,19 @@ class Extract(object):
             "Starting scan of {{table}} at {{id}} and sending to batch {{start_point}}",
             table=self.settings.snowflake.fact_table,
             id=first_value,
-            start_point=start_point
+            start_point=start_point,
         )
 
         id = quote_column(self._extract.field.last())
         ids = (
-            SQL_SELECT + id +
-            SQL_FROM + self.settings.snowflake.fact_table +
-            SQL_WHERE + id + " in " + sql_iso(sql_list(map(db.quote_value, data)))
+            SQL_SELECT
+            + id
+            + SQL_FROM
+            + self.settings.snowflake.fact_table
+            + SQL_WHERE
+            + id
+            + " in "
+            + sql_iso(sql_list(map(db.quote_value, data)))
         )
         sql = self.schema.get_sql(ids)
 
@@ -226,10 +312,7 @@ class Extract(object):
         with TempFile() as temp_file:
             parent_etl = None
             for s in start_point:
-                parent_etl = {
-                    "id": s,
-                    "source": parent_etl
-                }
+                parent_etl = {"id": s, "source": parent_etl}
             parent_etl["revision"] = get_revision()
             parent_etl["machine"] = machine_metadata
 
@@ -238,41 +321,55 @@ class Extract(object):
                 :param value: THE DOCUMENT TO ADD
                 :return: PleaseStop
                 """
-                temp_file.append(convert.value2json({
-                    fact_table: elasticsearch.scrub(value),
-                    "etl": {
-                        "id": i,
-                        "source": parent_etl,
-                        "timestamp": Date.now()
-                    }
-                }))
+                temp_file.append(
+                    convert.value2json(
+                        {
+                            fact_table: elasticsearch.scrub(value),
+                            "etl": {
+                                "id": i,
+                                "source": parent_etl,
+                                "timestamp": Date.now(),
+                            },
+                        }
+                    )
+                )
+
             with Timer("assemble data"):
                 self.construct_docs(cursor, append, please_stop)
 
             s3_file_name = ".".join(map(text_type, start_point))
-            with Timer("write to destination {{filename}}", param={"filename": s3_file_name}):
+            with Timer(
+                "write to destination {{filename}}", param={"filename": s3_file_name}
+            ):
                 if not isinstance(self.settings.destination, text_type):
                     # WRITE JSON LINES TO S3
                     destination = self.bucket.get_key(s3_file_name, must_exist=False)
                     destination.write_lines(temp_file)
                 else:
                     # WRITE PRETTY JSON TO FILE
-                    destination = File(self.settings.destination).add_suffix(s3_file_name)
-                    destination.write(convert.value2json([convert.json2value(o) for o in temp_file], pretty=True))
+                    destination = File(self.settings.destination).add_suffix(
+                        s3_file_name
+                    )
+                    destination.write(
+                        convert.value2json(
+                            [convert.json2value(o) for o in temp_file], pretty=True
+                        )
+                    )
                     return False
 
         # NOTIFY SQS
         now = Date.now()
-        self.notify.add({
-            "bucket": self.settings.destination.bucket,
-            "key": s3_file_name,
-            "timestamp": now.unix,
-            "date/time": now.format()
-        })
+        self.notify.add(
+            {
+                "bucket": self.settings.destination.bucket,
+                "key": s3_file_name,
+                "timestamp": now.unix,
+                "date/time": now.format(),
+            }
+        )
 
         # SUCCESS!!
         File(extract.last).write(convert.value2json([start_point, first_value]))
-
 
     def construct_docs(self, cursor, append, please_stop):
         """
@@ -318,7 +415,7 @@ class Extract(object):
                             children = parent[relative_path]
                             if children == None:
                                 children = parent[relative_path] = wrap([])
-                            parent_path=path
+                            parent_path = path
 
                     children.append(next_record)
                     continue
@@ -355,16 +452,20 @@ def main():
                             if please_stop:
                                 break
                             try:
-                                extractor.extract(db=db, please_stop=please_stop, **kwargs)
+                                extractor.extract(
+                                    db=db, please_stop=please_stop, **kwargs
+                                )
                             except Exception as e:
                                 Log.warning("Could not extract", cause=e)
                                 extractor.queue.add(kwargs)
 
             for i in range(settings.extract.threads):
-                Thread.run("extract #"+text_type(i), extract)
+                Thread.run("extract #" + text_type(i), extract)
 
             please_stop = Signal()
-            Thread.current().wait_for_shutdown_signal(please_stop=please_stop, allow_exit=True, wait_forever=False)
+            Thread.current().wait_for_shutdown_signal(
+                please_stop=please_stop, allow_exit=True, wait_forever=False
+            )
     except Exception as e:
         Log.warning("Problem with data extraction", e)
     finally:
@@ -386,7 +487,5 @@ def ineq(i, e, dim):
         return GT
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
-
-
