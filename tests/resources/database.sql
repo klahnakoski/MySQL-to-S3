@@ -22,7 +22,9 @@ CREATE TABLE fact_table (
 	id    INT NOT NULL PRIMARY KEY,
 	name VARCHAR(20),
 	about INT,
-	FOREIGN KEY (about) REFERENCES inner1 (id)
+	more INT,
+	FOREIGN KEY (about) REFERENCES inner1 (id),
+    FOREIGN KEY (more) REFERENCES inner1 (id)
 );
 INSERT INTO fact_table VALUES (10, 'A', 1);
 INSERT INTO fact_table VALUES (11, 'B', 2);
