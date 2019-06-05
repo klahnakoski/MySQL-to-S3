@@ -7,15 +7,17 @@
 #
 # Author: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import unicode_literals
+from __future__ import absolute_import, division, unicode_literals
 
+from functools import wraps
+
+from mo_future import is_text, is_binary
+from collections import namedtuple
 from types import FunctionType
 
+from mo_dots import Null, _get_attr, set_default
+from mo_future import get_function_arguments, get_function_name, text_type
 import mo_json
-from mo_dots import set_default, _get_attr, Null
-from mo_future import text_type, get_function_arguments
 from mo_logs import Log
 from mo_logs.exceptions import Except
 from mo_math.randoms import Random
@@ -52,7 +54,7 @@ def new_instance(settings):
     path = ".".join(path[:-1])
     constructor = None
     try:
-        temp = __import__(path, globals(), locals(), [class_name], -1)
+        temp = __import__(path, globals(), locals(), [class_name], 0)
         constructor = object.__getattribute__(temp, class_name)
     except Exception as e:
         Log.error("Can not find class {{class}}", {"class": path}, cause=e)
@@ -85,9 +87,6 @@ def get_function_by_name(full_name):
         return output
     except Exception as e:
         Log.error("Can not find function {{name}}",  name= full_name, cause=e)
-
-
-
 
 
 class cache(object):
@@ -135,7 +134,10 @@ def wrap_function(cache_store, func_):
         using_self = False
         func = lambda self, *args: func_(*args)
 
-    def output(*args):
+    def output(*args, **kwargs):
+        if kwargs:
+            Log.error("Sorry, caching only works with ordered parameter, not keyword arguments")
+
         with cache_store.locker:
             if using_self:
                 self = args[0]
@@ -152,7 +154,7 @@ def wrap_function(cache_store, func_):
 
             if Random.int(100) == 0:
                 # REMOVE OLD CACHE
-                _cache = {k: v for k, v in _cache.items() if v[0]==None or v[0] > now}
+                _cache = {k: v for k, v in _cache.items() if v.timeout == None or v.timeout > now}
                 setattr(self, attr_name, _cache)
 
             timeout, key, value, exception = _cache.get(args, (Null, Null, Null, Null))
@@ -160,7 +162,7 @@ def wrap_function(cache_store, func_):
         if now >= timeout:
             value = func(self, *args)
             with cache_store.locker:
-                _cache[args] = (now + cache_store.timeout, args, value, None)
+                _cache[args] = CacheElement(now + cache_store.timeout, args, value, None)
             return value
 
         if value == None:
@@ -168,12 +170,12 @@ def wrap_function(cache_store, func_):
                 try:
                     value = func(self, *args)
                     with cache_store.locker:
-                        _cache[args] = (now + cache_store.timeout, args, value, None)
+                        _cache[args] = CacheElement(now + cache_store.timeout, args, value, None)
                     return value
                 except Exception as e:
                     e = Except.wrap(e)
                     with cache_store.locker:
-                        _cache[args] = (now + cache_store.timeout, args, None, e)
+                        _cache[args] = CacheElement(now + cache_store.timeout, args, None, e)
                     raise e
             else:
                 raise exception
@@ -183,9 +185,10 @@ def wrap_function(cache_store, func_):
     return output
 
 
+CacheElement = namedtuple("CacheElement", ("timeout", "key", "value", "exception"))
+
+
 class _FakeLock():
-
-
     def __enter__(self):
         pass
 
@@ -193,10 +196,9 @@ class _FakeLock():
         pass
 
 
-
 def value2quote(value):
     # RETURN PRETTY PYTHON CODE FOR THE SAME
-    if isinstance(value, text_type):
+    if is_text(value):
         return mo_json.quote(value)
     else:
         return text_type(repr(value))
@@ -214,6 +216,18 @@ class extenstion_method(object):
         else:
             setattr(self.value, func.__name__, func)
             return func
+
+
+def extend(cls):
+    """
+    DECORATOR TO ADD METHODS TO CLASSES
+    :param cls: THE CLASS TO ADD THE METHOD TO
+    :return:
+    """
+    def extender(func):
+        setattr(cls, get_function_name(func), func)
+        return func
+    return extender
 
 
 class MemorySample(object):

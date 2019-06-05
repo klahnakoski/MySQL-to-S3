@@ -9,25 +9,22 @@
 #
 
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import unicode_literals
+from __future__ import absolute_import, division, unicode_literals
 
-from mo_future import text_type
-
+from mo_future import is_text, is_binary
+import jx_base
 from jx_base import generateGuid
-from jx_base.container import Container
 from jx_python import jx
 from jx_sqlite import UID
 from jx_sqlite.snowflake import Snowflake
 from mo_kwargs import override
-from pyLibrary.sql import SQL, SQL_UNION_ALL, SQL_SELECT
+from pyLibrary.sql import SQL, SQL_SELECT, SQL_UNION_ALL
 from pyLibrary.sql.sqlite import Sqlite, quote_value
 
 _config=None
 
 
-class BaseTable(Container):
+class BaseTable(jx_base.Facts):
     @override
     def __init__(self, name, db=None, uid=UID, kwargs=None):
         """
@@ -37,10 +34,10 @@ class BaseTable(Container):
         :return: HANDLE FOR TABLE IN db
         """
         global _config
-        if db:
+        if isinstance(db, Sqlite):
             self.db = db
         else:
-            self.db = db = Sqlite()
+            self.db = db = Sqlite(db)
 
         if not _config:
             # REGISTER sqlite AS THE DEFAULT CONTAINER TYPE
@@ -56,7 +53,7 @@ class BaseTable(Container):
         self._next_guid = generateGuid()
         self._next_uid = 1
         self._make_digits_table()
-        self.uid_accessor = jx.get(self.sf.uid)
+        self.uid_accessor = jx.get(uid)
 
 
     def _make_digits_table(self):
@@ -66,5 +63,9 @@ class BaseTable(Container):
             self.db.execute("INSERT INTO __digits__ " + SQL_UNION_ALL.join(SQL_SELECT + SQL(quote_value(i)) for i in range(10)))
 
     @property
+    def namespace(self):
+        namespace
+
+    @property
     def schema(self):
-        return self.sf.tables['.'].schema
+        return self.sf.tables["."].schema
