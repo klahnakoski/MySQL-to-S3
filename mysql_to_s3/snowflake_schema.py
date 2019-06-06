@@ -70,6 +70,7 @@ class SnowflakeSchema(object):
         self.settings.show_foreign_keys = coalesce(
             self.settings.show_foreign_keys, True
         )
+        self.name_relations = unwrap(self.settings.name_relations)
 
         self.all_nested_paths = None
         self.nested_path_to_join = None
@@ -395,7 +396,6 @@ class SnowflakeSchema(object):
                 no_nested_docs = True
             if position.name in reference_only_tables:
                 return
-
             curr_join_list = copy(nested_path_to_join[nested_path[0]])
 
             # INNER OBJECTS
@@ -445,19 +445,29 @@ class SnowflakeSchema(object):
                 # referenced_table_path = join_field(split_field(path) + ["/".join(constraint_columns.referenced.table.name)])
                 # HANDLE THE COMMON *id SUFFIX
                 name = []
-                for a, b in zip(
+                for cname, tname in zip(
                     constraint_columns.column.name,
                     constraint_columns.referenced.table.name,
                 ):
-                    if a.startswith(b):
-                        name.append(b)
-                    elif a.endswith("_id"):
-                        name.append(a[:-3])
+                    if cname.startswith(tname):
+                        name.append(tname)
+                    elif cname.endswith("_id"):
+                        name.append(cname[:-3])
                     else:
-                        name.append(a)
-                referenced_column_path = join_field(
-                    split_field(path) + ["/".join(name)]
-                )
+                        name.append(cname)
+
+                relation_string = many_to_one_string(constraint_columns[0])
+                step = "/".join(name)
+                if len(constraint_columns) == 1:
+                    step = self.name_relations.get(relation_string, step)
+
+                referenced_column_path = concat_field(path, step)
+                if self.path_not_allowed(referenced_column_path):
+                    continue
+
+                if referenced_column_path in reference_only_tables:
+                    continue
+
                 col_pointer_name = relative_field(
                     referenced_column_path, nested_path[0]
                 )
@@ -591,9 +601,7 @@ class SnowflakeSchema(object):
                     relation_string = one_to_many_string(constraint_columns[0])
                     step = "/".join(many_table)
                     if len(constraint_columns) == 1:
-                        step = coalesce(
-                            self.settings.name_relations[relation_string], step
-                        )
+                        step = self.name_relations.get(relation_string, step)
 
                     referenced_column_path = concat_field(path, step)
                     if self.path_not_allowed(referenced_column_path):

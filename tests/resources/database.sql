@@ -19,25 +19,25 @@ INSERT INTO inner1 VALUES (2, 'b', -2);
 INSERT INTO inner1 VALUES (3, 'c', NULL);
 
 CREATE TABLE fact_table (
-	id    INT NOT NULL PRIMARY KEY,
-	name VARCHAR(20),
-	about INT,
-	more INT,
+	id       INT NOT NULL PRIMARY KEY,
+	name     VARCHAR(20),
+	about    INT,
+	bad_name INT,
 	FOREIGN KEY (about) REFERENCES inner1 (id),
-    FOREIGN KEY (more) REFERENCES inner1 (id)
+    FOREIGN KEY (bad_name) REFERENCES inner1 (id)
 );
-INSERT INTO fact_table VALUES (10, 'A', 1);
-INSERT INTO fact_table VALUES (11, 'B', 2);
-INSERT INTO fact_table VALUES (12, 'C', 3);
-INSERT INTO fact_table VALUES (13, 'D', NULL);
-INSERT INTO fact_table VALUES (15, 'E', 1);
-INSERT INTO fact_table VALUES (16, 'F', 2);
-INSERT INTO fact_table VALUES (17, 'G', 3);
-INSERT INTO fact_table VALUES (18, 'H', NULL);
-INSERT INTO fact_table VALUES (19, 'I', 1);
-INSERT INTO fact_table VALUES (20, 'J', 2);
-INSERT INTO fact_table VALUES (21, 'K', 3);
-INSERT INTO fact_table VALUES (22, 'L', NULL);
+INSERT INTO fact_table VALUES (10, 'A',    1,    2);
+INSERT INTO fact_table VALUES (11, 'B',    2,    3);
+INSERT INTO fact_table VALUES (12, 'C',    3, NULL);
+INSERT INTO fact_table VALUES (13, 'D', NULL,    1);
+INSERT INTO fact_table VALUES (15, 'E',    1,    2);
+INSERT INTO fact_table VALUES (16, 'F',    2,    3);
+INSERT INTO fact_table VALUES (17, 'G',    3, NULL);
+INSERT INTO fact_table VALUES (18, 'H', NULL,    1);
+INSERT INTO fact_table VALUES (19, 'I',    1,    2);
+INSERT INTO fact_table VALUES (20, 'J',    2,    3);
+INSERT INTO fact_table VALUES (21, 'K',    3, NULL);
+INSERT INTO fact_table VALUES (22, 'L', NULL,    1);
 
 CREATE TABLE nested1 (
 	id          INT NOT NULL PRIMARY KEY,

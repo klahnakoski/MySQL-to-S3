@@ -12,12 +12,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import unicode_literals
 
+from mo_dots import set_default, wrap, Null
 from mo_files import File
 from mo_logs import Log, startup, constants
 from mo_testing.fuzzytestcase import FuzzyTestCase
 from mo_times.timer import Timer
-
-from mo_dots import set_default, wrap, Null
+from mysql_to_s3 import snowflake_schema
 from mysql_to_s3.extract import Extract
 from pyLibrary.sql.mysql import MySQL, execute_file
 
@@ -29,6 +29,8 @@ class TestExtract(FuzzyTestCase):
     @classmethod
     def setUpClass(cls):
         Log.start(settings.debug)
+        snowflake_schema.DEBUG = (True,)
+
         with Timer("setup database"):
             try:
                 with MySQL(schema=None, kwargs=settings.database) as db:
@@ -153,6 +155,26 @@ class TestExtract(FuzzyTestCase):
         self.assertEqual(result, expected, "expecting identical")
         self.assertEqual(expected, result, "expecting identical")
 
+    def test_rename(self):
+        config = set_default(
+            {"snowflake": {"show_foreign_keys": False, "exclude_path": "id.bad_name"}},
+            config_template,
+        )
+
+        db = MySQL(**config.snowflake.database)
+        data = [10]
+        with db:
+            Extract(kwargs=config).extract(
+                db=db, start_point=Null, first_value=Null, data=data, please_stop=Null
+            )
+
+        result = File(filename).read_json()
+        for r in result:
+            r.etl = None
+        expected = expected_results["rename"]
+        self.assertEqual(result, expected, "expecting identical")
+        self.assertEqual(expected, result, "expecting identical")
+
 
 filename = "tests/output/test_output.json"
 
@@ -171,8 +193,13 @@ config_template = wrap(
             "show_foreign_keys": True,
             "null_values": ["-", "unknown", ""],
             "add_relations": [],
+            "name_relations": {
+                "fact_table.id <- nested1.ref": "interesting",
+                "fact_table.bad_name -> inner1.id": "more",
+            },
             "include": [],
             "exclude": [],
+            "exclude_path": "id.more",
             "reference_only": ["inner1", "inner2"],
             "database": settings.database,
         },
@@ -188,7 +215,7 @@ expected_results = {
                 "about": "a",
                 "id": 10,
                 "name": "A",
-                "nested1": {
+                "interesting": {
                     "about": 0,
                     "description": "aaa",
                     "nested2": [
@@ -206,7 +233,7 @@ expected_results = {
                 "about": {"value": "a", "time": {"value": 0}},
                 "id": 10,
                 "name": "A",
-                "nested1": {
+                "interesting": {
                     "about": {"value": 0},
                     "description": "aaa",
                     "nested2": [
@@ -227,7 +254,7 @@ expected_results = {
                 "about": {"id": 1, "time": {"id": -1, "value": 0}, "value": "a"},
                 "id": 10,
                 "name": "A",
-                "nested1": {
+                "interesting": {
                     "about": {"id": -1, "value": 0},
                     "description": "aaa",
                     "id": 100,
@@ -266,7 +293,7 @@ expected_results = {
                 "about": {"id": 1, "value": "a"},
                 "id": 10,
                 "name": "A",
-                "nested1": {
+                "interesting": {
                     "about": {"id": -1, "value": 0},
                     "ref": 10,
                     "description": "aaa",
@@ -298,7 +325,7 @@ expected_results = {
     "lean_inline_all": [
         {
             "fact_table": {
-                "nested1": {
+                "interesting": {
                     "about": 0,
                     "description": "aaa",
                     "nested2": [
@@ -314,7 +341,7 @@ expected_results = {
         },
         {
             "fact_table": {
-                "nested1": {
+                "interesting": {
                     "description": "bbb",
                     "nested2": {"about": "a", "minutia": 6.2},
                 },
@@ -325,7 +352,7 @@ expected_results = {
         },
         {
             "fact_table": {
-                "nested1": {
+                "interesting": {
                     "description": "ccc",
                     "nested2": {"about": "c", "minutia": 7.3},
                 },
@@ -336,14 +363,14 @@ expected_results = {
         },
         {
             "fact_table": {
-                "nested1": {"about": 0, "description": "ddd"},
+                "interesting": {"about": 0, "description": "ddd"},
                 "id": 13,
                 "name": "D",
             }
         },
         {
             "fact_table": {
-                "nested1": [
+                "interesting": [
                     {"about": 0, "description": "eee"},
                     {"about": 0, "description": "fff"},
                 ],
@@ -354,7 +381,7 @@ expected_results = {
         },
         {
             "fact_table": {
-                "nested1": [{"description": "ggg"}, {"description": "hhh"}],
+                "interesting": [{"description": "ggg"}, {"description": "hhh"}],
                 "about": "b",
                 "id": 16,
                 "name": "F",
@@ -362,7 +389,7 @@ expected_results = {
         },
         {
             "fact_table": {
-                "nested1": [{"description": "iii"}, {"description": "jjj"}],
+                "interesting": [{"description": "iii"}, {"description": "jjj"}],
                 "about": "c",
                 "id": 17,
                 "name": "G",
@@ -370,7 +397,7 @@ expected_results = {
         },
         {
             "fact_table": {
-                "nested1": [{"description": "kkk"}, {"description": "lll"}],
+                "interesting": [{"description": "kkk"}, {"description": "lll"}],
                 "id": 18,
                 "name": "H",
             }
@@ -379,5 +406,27 @@ expected_results = {
         {"fact_table": {"about": "b", "id": 20, "name": "J"}},
         {"fact_table": {"about": "c", "id": 21, "name": "K"}},
         {"fact_table": {"id": 22, "name": "L"}},
+    ],
+    "rename": [
+        {
+            "fact_table": {
+                "about": {"value": "a", "time": {"value": 0}},
+                "more": {"value": "b"},
+                "id": 10,
+                "name": "A",
+                "interesting": {
+                    "about": {"value": 0},
+                    "description": "aaa",
+                    "nested2": [
+                        {
+                            "about": {"value": "a", "time": {"value": 0}},
+                            "minutia": 3.1415926539,
+                        },
+                        {"about": {"value": "b"}, "minutia": 4},
+                        {"about": {"value": "c"}, "minutia": 5.1},
+                    ],
+                },
+            }
+        }
     ],
 }
