@@ -7,3 +7,4 @@
 /tests/resources/output
 /logs
 /vendor/pyLibrary/vendor/sqlite
+.svn

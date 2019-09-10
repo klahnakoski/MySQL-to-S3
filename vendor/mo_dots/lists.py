@@ -286,8 +286,8 @@ class FlatList(list):
 FlatList.EMPTY = Null
 
 list_types = (list, FlatList)
-container_types = (list, FlatList, set)  # CONTENTS CAN BE CHANGED
-sequence_types = (list, FlatList, tuple)  # CONTENTS HAVE AN ORDER
+container_types = (list, FlatList, set)
+sequence_types = (list, FlatList, tuple)
 many_types = tuple(set(list_types + container_types + sequence_types + generator_types))
 
 

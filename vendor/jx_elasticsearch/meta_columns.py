@@ -14,12 +14,13 @@ from jx_base import Column, Table
 from jx_base.meta_columns import META_COLUMNS_NAME, META_COLUMNS_TYPE_NAME, SIMPLE_METADATA_COLUMNS, META_COLUMNS_DESC
 from jx_base.schema import Schema
 from jx_python import jx
-from mo_dots import Data, Null, is_data, is_list, unwraplist, wrap
+from mo_dots import Data, Null, is_data, is_list, unwraplist, wrap, set_default
 from mo_json import STRUCT
 from mo_json.typed_encoder import unnest_path, untype_path, untyped
 from mo_logs import Log
 from mo_math import MAX
 from mo_threads import Lock, MAIN_THREAD, Queue, Thread, Till
+from mo_times import YEAR
 from mo_times.dates import Date
 
 DEBUG = False
@@ -205,9 +206,7 @@ class ColumnList(Table, jx_base.Container):
                     for key in Column.__slots__:
                         old_value = canonical[key]
                         new_value = column[key]
-                        if new_value == None:
-                            pass  # DO NOT BOTHER CLEARING OLD VALUES (LIKE cardinality AND paritiions)
-                        elif new_value == old_value:
+                        if new_value == old_value:
                             pass  # NO NEED TO UPDATE WHEN NO CHANGE MADE (COMMON CASE)
                         else:
                             canonical[key] = new_value
@@ -435,7 +434,8 @@ class ColumnList(Table, jx_base.Container):
 
 
 def doc_to_column(doc):
-    return Column(**wrap(untyped(doc)))
+    kwargs = set_default(untyped(doc), {"last_updated": Date.now()-YEAR})
+    return Column(**wrap(kwargs))
 
 
 def mark_as_deleted(col):

@@ -44,6 +44,8 @@ TEST_TABLE_PREFIX = "testing"  # USED TO TURN OFF COMPLAINING ABOUT TEST INDEXES
 
 known_clusters = {}  # MAP FROM id(Cluster) TO ElasticsearchMetadata INSTANCE
 
+KNOWN_MULTITYPES = ["build.type", "run.type", "build.platform", "file.path"]
+
 
 class ElasticsearchMetadata(Namespace):
     """
@@ -121,6 +123,7 @@ class ElasticsearchMetadata(Namespace):
         metadata = self.es_cluster.get_metadata(after=after)
 
         props = [
+            # NOTICE THIS TRIPLE (index, type, properties)
             (self.es_cluster.get_index(index=i, type=t, debug=DEBUG), t, m.properties)
             for i, d in metadata.indices.items()
             if alias in d.aliases
@@ -140,15 +143,33 @@ class ElasticsearchMetadata(Namespace):
         if dirty:
             metadata = self.es_cluster.get_metadata(after=Date.now())
 
+        now = self.es_cluster.metatdata_last_updated
         meta = metadata.indices[literal_field(canonical_index)]
         data_type, mapping = _get_best_type_from_mapping(meta.mappings)
         mapping.properties["_id"] = {"type": "string", "index": "not_analyzed"}
         columns = self._parse_properties(alias, mapping)
+        table_desc.last_updated = now
 
-        table_desc.last_updated = self.es_cluster.metatdata_last_updated
+        column_names = {c.es_column for c in columns}
+        # DELETE SOME COLUMNS
+        for c in self.meta.columns.find(alias):
+            if c.es_column not in column_names:
+                DEBUG and Log.note("delete {{col|quote}}", col=c.es_column)
+                c.cardinality = 0
+                c.multi = 0
+                c.last_updated = now
 
         # ASK FOR COLUMNS TO BE RE-SCANNED
-        self.todo.extend((c, after) for c in columns if c.es_index != META_COLUMNS_NAME)
+        rescan = [
+            (c, after)
+            for c in columns
+            if c.es_index != META_COLUMNS_NAME and (
+                c.cardinality == None or
+                not (c.last_updated > after)
+            )
+        ]
+        self.todo.extend(rescan)
+        DEBUG and Log.note("asked for {{num}} columns to be rescanned", num=len(rescan))
         return columns
 
     def _parse_properties(self, alias, mapping):
@@ -161,8 +182,8 @@ class ElasticsearchMetadata(Namespace):
 
         abs_columns = elasticsearch.parse_properties(alias, ".", ROOT_PATH, mapping.properties)
         if DEBUG and any(c.cardinality == 0 and c.name != '_id' for c in abs_columns):
-            Log.warning(
-                "Some columns are not stored in {{url}} {{index|quote}} table:\n{{names}}",
+            Log.note(
+                "Some columns are always missing in {{url}} {{index|quote}} table:\n{{names}}",
                 url=self.es_cluster.url,
                 index=alias,
                 names=[
@@ -254,7 +275,9 @@ class ElasticsearchMetadata(Namespace):
         :return:
         """
         DEBUG and after and Log.note("getting columns for {{table}} after {{time}}", table=table_name, time=after)
-        if table_name in (META_COLUMNS_NAME, META_TABLES_NAME):
+        if table_name == META_TABLES_NAME:
+            return self.meta.tables.schema.columns
+        elif table_name == META_COLUMNS_NAME:
             root_table_name = table_name
         else:
             root_table_name = first(split_field(table_name))
@@ -595,7 +618,7 @@ class ElasticsearchMetadata(Namespace):
         please_stop.then(lambda: self.todo.add(THREAD_STOP))
         while not please_stop:
             pair = self.todo.pop()
-            if pair == THREAD_STOP:
+            if pair is THREAD_STOP:
                 break
             column, after = pair
 
@@ -610,7 +633,7 @@ class ElasticsearchMetadata(Namespace):
                     DEBUG and Log.note("{{column.es_column}} is still fresh ({{ago}} ago)", column=column, ago=(Date.now()-Date(column.last_updated)).seconds)
                     continue
 
-                if untype_path(column.name) in ["build.type", "run.type"]:
+                if untype_path(column.name) in KNOWN_MULTITYPES:
                     try:
                         self._update_cardinality(column)
                     except Exception as e:
@@ -643,7 +666,7 @@ class ElasticsearchMetadata(Namespace):
         if name == META_COLUMNS_NAME:
             return self.meta.columns.schema
         if name == META_TABLES_NAME:
-            return self.meta.tables
+            return self.meta.tables.schema
         root, rest = tail_field(name)
         return self.get_snowflake(root).get_schema(rest)
 

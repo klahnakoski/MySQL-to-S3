@@ -10,9 +10,10 @@
 
 from __future__ import absolute_import, division, unicode_literals
 
+from mo_future import is_text, is_binary
 from mo_future import PY3, text_type
-from mo_future import is_text
 from mo_logs import Log
+import pyLibrary.sql
 
 
 class SQL(text_type):
@@ -84,7 +85,6 @@ SQL_END = SQL(" END ")
 SQL_COMMA = SQL(", ")
 SQL_UNION_ALL = SQL("\nUNION ALL\n")
 SQL_UNION = SQL("\nUNION\n")
-SQL_JOIN = SQL("\nJOIN\n")
 SQL_LEFT_JOIN = SQL("\nLEFT JOIN\n")
 SQL_INNER_JOIN = SQL("\nJOIN\n")
 SQL_EMPTY_STRING = SQL("''")
@@ -119,10 +119,6 @@ def sql_list(list_):
     if not all(isinstance(s, SQL) for s in list_):
         Log.error("Can only join other SQL")
     return SQL(" " + ", ".join(l.value for l in list_) + " ")
-
-
-def sql_and(list_):
-    return SQL_AND.join(list_)
 
 
 def sql_iso(sql):

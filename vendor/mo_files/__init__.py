@@ -116,16 +116,17 @@ class File(object):
             else:
                 return os.path.abspath(self._filename)
 
-    def add_suffix(self, suffix):
+    @staticmethod
+    def add_suffix(filename, suffix):
         """
         ADD suffix TO THE filename (NOT INCLUDING THE FILE EXTENSION)
         """
-        path = self._filename.split("/")
+        path = filename.split("/")
         parts = path[-1].split(".")
         i = max(len(parts) - 2, 0)
         parts[i] = parts[i] + suffix
         path[-1] = ".".join(parts)
-        return File("/".join(path))
+        return "/".join(path)
 
     @property
     def extension(self):

@@ -359,7 +359,7 @@ class MySQL(object):
         if not self.backlog: return
 
         backlog, self.backlog = self.backlog, []
-        for i, g in jx.groupby(backlog, size=MAX_BATCH_SIZE):
+        for i, g in jx.chunk(backlog, size=MAX_BATCH_SIZE):
             sql = self.preamble + ";\n".join(g)
             try:
                 self.debug and Log.note("Execute block of SQL:\n{{sql|indent}}", sql=sql)
@@ -465,9 +465,6 @@ class MySQL(object):
         sort = jx.normalize_sort_parameters(sort)
         return sql_list([quote_column(s.field) + (SQL_DESC if s.sort == -1 else SQL_ASC) for s in sort])
 
-    def quote_value(self, value):
-        return quote_value(value)
-
 @override
 def execute_sql(
     host,
@@ -572,12 +569,12 @@ def quote_value(value):
             return SQL("'" + "".join(ESCAPE_DCT.get(c, c) for c in value) + "'")
         elif is_data(value):
             return quote_value(json_encode(value))
-        elif isinstance(value, Date):
-            return SQL("str_to_date('" + value.format("%Y%m%d%H%M%S.%f") + "', '%Y%m%d%H%i%s.%f')")
         elif is_number(value):
             return SQL(text_type(value))
         elif isinstance(value, datetime):
             return SQL("str_to_date('" + value.strftime("%Y%m%d%H%M%S.%f") + "', '%Y%m%d%H%i%s.%f')")
+        elif isinstance(value, Date):
+            return SQL("str_to_date('" + value.format("%Y%m%d%H%M%S.%f") + "', '%Y%m%d%H%i%s.%f')")
         elif hasattr(value, '__iter__'):
             return quote_value(json_encode(value))
         else:

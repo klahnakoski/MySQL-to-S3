@@ -29,10 +29,12 @@ boolean_type = type(True)
 if PY3:
     import itertools
     import collections
+    from collections import Callable
     from functools import cmp_to_key, reduce, update_wrapper
     from configparser import ConfigParser
     from itertools import zip_longest
     import builtins as __builtin__
+    from builtins import input
 
     izip = zip
     zip_longest = itertools.zip_longest
@@ -119,12 +121,16 @@ if PY3:
 
 else:
     import collections
+    from collections import Callable
+    from functools import cmp_to_key, reduce, update_wrapper
+
     import __builtin__
     from types import GeneratorType
     from ConfigParser import ConfigParser
     from itertools import izip_longest as zip_longest
     from __builtin__ import zip as transpose
     from itertools import izip
+    from __builtin__ import raw_input as input
 
     reduce = __builtin__.reduce
     text_type = __builtin__.unicode
@@ -263,15 +269,13 @@ else:
 
 
 class decorate(object):
-
     def __init__(self, func):
         self.func = func
 
     def __call__(self, caller):
         """
-        IT IS EXPECTED THE caller WILL CALL func
-        :param caller:
-        :return:
+        :param caller: A METHOD THAT IS EXPECTED TO CALL func
+        :return: caller, BUT WITH SIGNATURE OF  self.func
         """
         return update_wrapper(caller, self.func)
 

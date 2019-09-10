@@ -13,20 +13,20 @@ from collections import deque
 
 from jx_base.domains import SetDomain
 from jx_base.expressions import NULL, TupleOp, Variable as Variable_
-from jx_base.query import DEFAULT_LIMIT
 from jx_base.language import is_op
+from jx_base.query import DEFAULT_LIMIT
 from jx_elasticsearch import post as es_post
 from jx_elasticsearch.es52.decoders import AggsDecoder
-from jx_elasticsearch.es52.es_query import Aggs, ExprAggs, FilterAggs, NestedAggs, TermsAggs, simplify, CountAggs
+from jx_elasticsearch.es52.es_query import Aggs, CountAggs, ExprAggs, FilterAggs, NestedAggs, TermsAggs, simplify
 from jx_elasticsearch.es52.expressions import AndOp, ES52, split_expression_by_path
-from jx_elasticsearch.es52.painless import Painless
+from jx_elasticsearch.es52.painless import NumberOp, Painless
 from jx_elasticsearch.es52.setop import get_pull_stats
 from jx_elasticsearch.es52.util import aggregates
 from jx_python import jx
 from jx_python.expressions import jx_expression_to_function
-from mo_dots import Data, Null, coalesce, join_field, listwrap, literal_field, unwrap, unwraplist, wrap, concat_field
+from mo_dots import Data, Null, coalesce, join_field, listwrap, literal_field, unwrap, unwraplist, wrap
 from mo_future import first, is_text, text_type
-from mo_json import EXISTS, NESTED, OBJECT
+from mo_json import EXISTS, INTEGER, NESTED, NUMBER, OBJECT
 from mo_json.typed_encoder import encode_property
 from mo_logs import Log
 from mo_logs.strings import expand_template, quote
@@ -83,7 +83,7 @@ COMPARE_TUPLE = """
 
 
 MAX_OF_TUPLE = """
-(Object[])Arrays.asList(new Object[]{{{expr1}}, {{expr2}}}).stream().{{op}}("""+COMPARE_TUPLE+""").get()
+(Object[])([{{expr1}}, {{expr2}}].stream().{{op}}("""+COMPARE_TUPLE+""").get())
 """
 
 
@@ -223,8 +223,9 @@ def es_aggsop(es, frum, query):
                 else:
                     s.pull = jx_expression_to_function({"add": canonical_names})
             elif s.aggregate == "median":
-                if len(columns) > 1:
-                    Log.error("Do not know how to count columns with more than one type (script probably)")
+                columns = [c for c in columns if c.jx_type in (NUMBER, INTEGER)]
+                if len(columns) != 1:
+                    Log.error("Do not know how to perform median on columns with more than one type (script probably)")
                 # ES USES DIFFERENT METHOD FOR PERCENTILES
                 key = canonical_name + " percentile"
                 acc.add(ExprAggs(key, {"percentiles": {
@@ -233,8 +234,9 @@ def es_aggsop(es, frum, query):
                 }}, s))
                 s.pull = jx_expression_to_function("values.50\\.0")
             elif s.aggregate == "percentile":
-                if len(columns) > 1:
-                    Log.error("Do not know how to count columns with more than one type (script probably)")
+                columns = [c for c in columns if c.jx_type in (NUMBER, INTEGER)]
+                if len(columns) != 1:
+                    Log.error("Do not know how to perform percentile on columns with more than one type (script probably)")
                 # ES USES DIFFERENT METHOD FOR PERCENTILES
                 key = canonical_name + " percentile"
                 if is_text(s.percentile) or s.percetile < 0 or 1 < s.percentile:
@@ -253,8 +255,9 @@ def es_aggsop(es, frum, query):
                     acc.add(ExprAggs(path, {"cardinality": {"field": column.es_column}}, s))
                 s.pull = jx_expression_to_function("value")
             elif s.aggregate == "stats":
-                if len(columns) > 1:
-                    Log.error("Do not know how to count columns with more than one type (script probably)")
+                columns = [c for c in columns if c.jx_type in (NUMBER, INTEGER)]
+                if len(columns) != 1:
+                    Log.error("Do not know how to perform stats on columns with more than one type (script probably)")
                 # REGULAR STATS
                 acc.add(ExprAggs(canonical_name, {"extended_stats": {"field": first(columns).es_column}}, s))
                 s.pull = get_pull_stats()
@@ -343,7 +346,7 @@ def es_aggsop(es, frum, query):
                 selfy = text_type(Painless[s.value].partial_eval().to_es_script(schema))
 
                 script = {"scripted_metric": {
-                    'init_script': 'params._agg.best = ' + nully + ';',
+                    'init_script': 'params._agg.best = ' + nully + '.toArray();',
                     'map_script': 'params._agg.best = ' + expand_template(MAX_OF_TUPLE, {"expr1": "params._agg.best", "expr2": selfy, "dir": dir, "op": op}) + ";",
                     'combine_script': 'return params._agg.best',
                     'reduce_script': 'return params._aggs.stream().'+op+'(' + expand_template(COMPARE_TUPLE, {"dir": dir, "op": op}) + ').get()',
@@ -400,7 +403,7 @@ def es_aggsop(es, frum, query):
         else:
             # PULL VALUE OUT OF THE stats AGGREGATE
             s.pull = jx_expression_to_function(aggregates[s.aggregate])
-            nest.add(ExprAggs(canonical_name, {"extended_stats": {"script": text_type(Painless[s.value].to_es_script(schema))}}, s))
+            nest.add(ExprAggs(canonical_name, {"extended_stats": {"script": text_type(NumberOp(s.value).partial_eval().to_es_script(schema))}}, s))
 
     acc = NestedAggs(query_path).add(acc)
     split_decoders = get_decoders_by_path(query)

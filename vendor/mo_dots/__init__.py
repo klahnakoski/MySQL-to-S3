@@ -533,10 +533,7 @@ def unwrap(v):
         return None
     elif _type is DataObject:
         d = _get(v, OBJ)
-        if _get(d, CLASS) in data_types:
-            return d
-        else:
-            return v
+        return d
     elif _type in generator_types:
         return (unwrap(vv) for vv in v)
     else:
@@ -550,7 +547,7 @@ def listwrap(value):
     value -> [value]
     [...] -> [...]  (unchanged list)
 
-    ##MOTIVATION##
+    ## MOTIVATION ##
     OFTEN IT IS NICE TO ALLOW FUNCTION PARAMETERS TO BE ASSIGNED A VALUE,
     OR A list-OF-VALUES, OR NULL.  CHECKING FOR WHICH THE CALLER USED IS
     TEDIOUS.  INSTEAD WE CAST FROM THOSE THREE CASES TO THE SINGLE CASE

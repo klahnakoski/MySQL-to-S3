@@ -17,7 +17,6 @@ from mo_logs import Except
 
 KWARGS = str("kwargs")
 
-
 def override(func):
     """
     THIS DECORATOR WILL PUT ALL PARAMETERS INTO THE `kwargs` PARAMETER AND
