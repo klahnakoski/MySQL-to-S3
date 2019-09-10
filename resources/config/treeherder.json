@@ -70,7 +70,7 @@
 		"database": {
 			"debug": false,
 			"schema": "treeherder",
-			"username": "activedata",
+			"username": "activedata2",
 			"ssl": {
 				"ca": "./resources/certs/treeherder.pem"
 			},
