@@ -22,7 +22,7 @@ from pymysql import connect, InterfaceError, cursors
 import mo_json
 from jx_python import jx
 from mo_dots import coalesce, wrap, listwrap, unwrap
-from mo_files import File
+from mo_files import File, TempFile
 from mo_future import text_type, utf8_json_encoder
 from mo_kwargs import override
 from mo_logs import Log
@@ -32,6 +32,7 @@ from mo_logs.strings import indent
 from mo_logs.strings import outdent
 from mo_math import Math
 from mo_times import Date
+from pyLibrary.env import http
 from pyLibrary.sql import SQL, SQL_NULL, SQL_SELECT, SQL_LIMIT, SQL_WHERE, SQL_LEFT_JOIN, SQL_FROM, SQL_AND, sql_list, sql_iso, SQL_ASC, SQL_TRUE, SQL_ONE, SQL_DESC, SQL_IS_NULL
 
 DEBUG = False
@@ -91,6 +92,12 @@ class MySQL(object):
     def _open(self):
         """ DO NOT USE THIS UNLESS YOU close() FIRST"""
         try:
+            if self.settings.ssl.ca.startswith("https://"):
+                self.pemfile_url = self.settings.ssl.ca
+                self.pemfile = File("./resources/pem")/self.settings.host
+                self.pemfile.write_bytes(http.get(self.pemfile_url).content)
+                self.settings.ssl.ca = self.pemfile.abspath
+
             self.db = connect(
                 host=self.settings.host,
                 port=self.settings.port,

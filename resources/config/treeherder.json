@@ -72,7 +72,7 @@
 			"schema": "treeherder",
 			"username": "activedata2",
 			"ssl": {
-				"ca": "./resources/certs/treeherder.pem"
+				"ca": "https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem"
 			},
 			"$ref": "~/private.json#treeherder"
 		}
