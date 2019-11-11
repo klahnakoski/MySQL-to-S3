@@ -755,7 +755,7 @@ class SnowflakeSchema(object):
                 elif curr_join.children:
                     full_name = quote_column(rel.table.schema, rel.table.name)
                     sql_joins.append(
-                        SQL_LEFT_JOIN
+                        SQL_INNER_JOIN
                         + sql_alias(full_name, rel.table.alias)
                         + SQL_ON
                         + SQL_AND.join(

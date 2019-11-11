@@ -35,6 +35,7 @@ from mo_times.timer import Timer
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
 from pyLibrary import convert, aws
+from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_revision
 from pyLibrary.sql import (
@@ -113,6 +114,7 @@ class Extract(object):
             "all batches", max=2 * coalesce(extract.threads, 1), silent=True
         )
 
+        self.bucket = s3.Bucket(self.settings.destination)
         if self.settings.notify:
             self.notify = aws.Queue(self.settings.notify)
         else:
