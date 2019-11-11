@@ -1,10 +1,1 @@
-pyLibrary
-mo-logs
-mo-dots
-mo_collections
-mo-times
-mo-math
-mo-files
-mo-json-config
-mo-threads
 pymysql

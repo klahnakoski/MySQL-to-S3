@@ -86,6 +86,12 @@ class MySQL(object):
     def _open(self):
         """ DO NOT USE THIS UNLESS YOU close() FIRST"""
         try:
+            if self.settings.ssl.ca.startswith("https://"):
+                self.pemfile_url = self.settings.ssl.ca
+                self.pemfile = File("./resources/pem")/self.settings.host
+                self.pemfile.write_bytes(http.get(self.pemfile_url).content)
+                self.settings.ssl.ca = self.pemfile.abspath
+
             self.db = connect(
                 host=self.settings.host,
                 port=self.settings.port,

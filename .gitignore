@@ -8,3 +8,5 @@
 /logs
 /vendor/pyLibrary/vendor/sqlite
 .svn
+/resources/pem
+>>>>>>> master
