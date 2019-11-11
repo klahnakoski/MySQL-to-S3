@@ -15,7 +15,7 @@
 			0
 		],
 		"batch": [
-			"week",
+			"day",
 			1000
 		]
 	},
@@ -68,7 +68,7 @@
 			"user.email"
 		],
 		"database": {
-			"debug": false,
+			"debug": true,
 			"schema": "treeherder",
 			"username": "activedata2",
 			"ssl": {

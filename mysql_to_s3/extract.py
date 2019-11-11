@@ -24,19 +24,17 @@ from mo_dots import (
     unwrap,
     relative_field,
     coalesce,
-    is_data,
 )
 from mo_files import File, TempFile
-from mo_future import text_type, transpose
+from mo_future import text
 from mo_kwargs import override
 from mo_logs import Log, startup, constants, machine_metadata
-from mo_threads import Signal, Thread, Queue, THREAD_STOP, MainThread
-from mo_times import Date, Duration, DAY
+from mo_threads import Signal, Thread, Queue, THREAD_STOP
+from mo_times import Date, Duration
 from mo_times.timer import Timer
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
 from pyLibrary import convert, aws
-from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_revision
 from pyLibrary.sql import (
@@ -48,13 +46,11 @@ from pyLibrary.sql import (
     SQL_FROM,
     SQL_SELECT,
     SQL_OR,
-    sql_and,
     sql_iso,
-    sql_alias,
     SQL_TRUE,
     SQL_AND,
-)
-from pyLibrary.sql.mysql import MySQL, quote_column
+    SQL_AS, ConcatSQL)
+from pyLibrary.sql.mysql import MySQL, quote_column, sql_alias, quote_value
 
 DEBUG = True
 
@@ -185,7 +181,7 @@ class Extract(object):
                         with closing(db.db.cursor()) as cursor:
                             acc = []
                             Log.note("SQL: {{sql}}", sql=sql)
-                            cursor.execute(sql)
+                            cursor.execute(text(sql))
                             count = 0
                             for row in cursor:
                                 detail_key = counter.next(row)
@@ -229,10 +225,10 @@ class Extract(object):
             dim = len(self._extract.field)
             where = SQL_OR.join(
                 sql_iso(
-                    sql_and(
+                    SQL_AND.join(
                         quote_column(f)
                         + ineq(i, e, dim)
-                        + db.quote_value(Date(v) if t == "time" else v)
+                        + quote_value(Date(v) if t == "time" else v)
                         for e, (f, v, t) in enumerate(
                             zip(
                                 self._extract.field[0: i + 1:],
@@ -250,13 +246,13 @@ class Extract(object):
         # ADD QUERY LIMIT - FOR CHUNKS THIS IS A SIMPLE LIMIT
         # DURATIONS REQUIRE A WHERE CLAUSE
         if last(self._extract.type) != "time":
-            limit = SQL_LIMIT + db.quote_value(batch_size)
+            limit = SQL_LIMIT + quote_value(batch_size)
         else:
             where += (
                 SQL_AND
                 + quote_column(last(self._extract.field))
                 + " < "
-                + db.quote_value((Date(last(first)) + Duration(batch_size)))
+                + quote_value((Date(last(first)) + Duration(batch_size)))
             )
             limit = ""
 
@@ -264,7 +260,7 @@ class Extract(object):
         for t, f in zip(self._extract.type, self._extract.field):
             if t == "time":
                 selects.append(
-                    "CAST" + sql_iso(sql_alias(quote_column(f), SQL("DATETIME(6)")))
+                    "CAST" + sql_iso(ConcatSQL((quote_column(f), SQL_AS, SQL("DATETIME(6)"))))
                 )
             else:
                 selects.append(quote_column(f))
@@ -299,7 +295,7 @@ class Extract(object):
             + SQL_WHERE
             + id
             + " in "
-            + sql_iso(sql_list(map(db.quote_value, data)))
+            + sql_iso(sql_list(map(quote_value, data)))
         )
         sql = self.schema.get_sql(ids)
 
@@ -337,11 +333,11 @@ class Extract(object):
             with Timer("assemble data"):
                 self.construct_docs(cursor, append, please_stop)
 
-            s3_file_name = ".".join(map(text_type, start_point))
+            s3_file_name = ".".join(map(text, start_point))
             with Timer(
                 "write to destination {{filename}}", param={"filename": s3_file_name}
             ):
-                if not isinstance(self.settings.destination, text_type):
+                if not isinstance(self.settings.destination, text):
                     # WRITE JSON LINES TO S3
                     destination = self.bucket.get_key(s3_file_name, must_exist=False)
                     destination.write_lines(temp_file)
@@ -462,7 +458,7 @@ def main():
                                 extractor.queue.add(kwargs)
 
             for i in range(settings.extract.threads):
-                Thread.run("extract #" + text_type(i), extract)
+                Thread.run("extract #" + text(i), extract)
 
             please_stop = Signal()
             Thread.current().wait_for_shutdown_signal(

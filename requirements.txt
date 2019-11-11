@@ -1,1 +1,2 @@
 pymysql
+fabric2

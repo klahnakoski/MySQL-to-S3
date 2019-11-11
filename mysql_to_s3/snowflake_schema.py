@@ -32,7 +32,7 @@ from mo_dots import (
     startswith_field,
     listwrap,
 )
-from mo_future import text_type
+from mo_future import text
 from mo_kwargs import override
 from mo_logs import Log, strings
 from mo_logs.exceptions import Explanation
@@ -40,21 +40,19 @@ from mo_math.randoms import Random
 from pyLibrary.sql import (
     SQL_SELECT,
     sql_list,
-    sql_alias,
     SQL_NULL,
     sql_iso,
     SQL_FROM,
+    SQL_INNER_JOIN,
     SQL_LEFT_JOIN,
-    sql_and,
     SQL_ON,
-    SQL_JOIN,
     SQL_UNION_ALL,
     SQL_ORDERBY,
     SQL_STAR,
     SQL_IS_NOT_NULL,
     SQL,
-)
-from pyLibrary.sql.mysql import MySQL, quote_column
+    SQL_AND, SQL_EQ)
+from pyLibrary.sql.mysql import MySQL, quote_column, sql_alias
 
 DEBUG = False
 
@@ -70,7 +68,7 @@ class SnowflakeSchema(object):
         self.settings.show_foreign_keys = coalesce(
             self.settings.show_foreign_keys, True
         )
-        self.name_relations = unwrap(self.settings.name_relations)
+        self.name_relations = unwrap(coalesce(self.settings.name_relations, {}))
 
         self.all_nested_paths = None
         self.nested_path_to_join = None
@@ -99,7 +97,7 @@ class SnowflakeSchema(object):
             SQL_SELECT
             + SQL_STAR
             + SQL_FROM
-            + sql_alias(sql_iso(union_all_sql), quote_column("a"))
+            + sql_alias(sql_iso(union_all_sql), "a")
             + SQL_ORDERBY
             + sql_list(sort)
         )
@@ -388,7 +386,7 @@ class SnowflakeSchema(object):
                 # USED TO CONFIRM WE CAN ACCESS THE TABLE (WILL THROW ERROR WHEN IF IT FAILS)
                 self.db.query(
                     "SELECT * FROM "
-                    + quote_column(position.name, position.schema)
+                    + quote_column(position.schema, position.name)
                     + " LIMIT 1"
                 )
 
@@ -430,7 +428,7 @@ class SnowflakeSchema(object):
                 many_to_one_joins = nested_path_to_join[nested_path[0]]
                 index = len(many_to_one_joins)
 
-                alias = "t" + text_type(index)
+                alias = "t" + text(index)
                 for c in constraint_columns:
                     c.referenced.table.alias = alias
                     c.table = position
@@ -494,7 +492,7 @@ class SnowflakeSchema(object):
                             output_columns.append(
                                 {
                                     "table_alias": alias,
-                                    "column_alias": "c" + text_type(c_index),
+                                    "column_alias": "c" + text(c_index),
                                     "column": col,
                                     "sort": True,
                                     "path": referenced_column_path,
@@ -507,7 +505,7 @@ class SnowflakeSchema(object):
                             output_columns.append(
                                 {
                                     "table_alias": alias,
-                                    "column_alias": "c" + text_type(c_index),
+                                    "column_alias": "c" + text(c_index),
                                     "column": col,
                                     "sort": False,
                                     "path": referenced_column_path,
@@ -522,7 +520,7 @@ class SnowflakeSchema(object):
                             output_columns.append(
                                 {
                                     "table_alias": alias,
-                                    "column_alias": "c" + text_type(c_index),
+                                    "column_alias": "c" + text(c_index),
                                     "column": col,
                                     "sort": False,
                                     "path": referenced_column_path,
@@ -537,7 +535,7 @@ class SnowflakeSchema(object):
                             output_columns.append(
                                 {
                                     "table_alias": alias,
-                                    "column_alias": "c" + text_type(c_index),
+                                    "column_alias": "c" + text(c_index),
                                     "column": col,
                                     "sort": False,
                                     "path": referenced_column_path,
@@ -552,7 +550,7 @@ class SnowflakeSchema(object):
                             output_columns.append(
                                 {
                                     "table_alias": alias,
-                                    "column_alias": "c" + text_type(c_index),
+                                    "column_alias": "c" + text(c_index),
                                     "column": col,
                                     "sort": False,
                                     "path": referenced_column_path,
@@ -622,7 +620,7 @@ class SnowflakeSchema(object):
                         referenced_column_path
                     ] = copy(curr_join_list)
                     index = len(one_to_many_joins)
-                    alias = "t" + text_type(index)
+                    alias = "t" + text(index)
                     for c in constraint_columns:
                         c.table.alias = alias
                         c.referenced.table = position
@@ -656,7 +654,7 @@ class SnowflakeSchema(object):
                                 output_columns.append(
                                     {
                                         "table_alias": alias,
-                                        "column_alias": "c" + text_type(c_index),
+                                        "column_alias": "c" + text(c_index),
                                         "column": col,
                                         "sort": col.is_id,
                                         "path": referenced_column_path,
@@ -671,7 +669,7 @@ class SnowflakeSchema(object):
                                 output_columns.append(
                                     {
                                         "table_alias": alias,
-                                        "column_alias": "c" + text_type(c_index),
+                                        "column_alias": "c" + text(c_index),
                                         "column": col,
                                         "sort": col.is_id,
                                         "path": referenced_column_path,
@@ -686,7 +684,7 @@ class SnowflakeSchema(object):
                                 output_columns.append(
                                     {
                                         "table_alias": alias,
-                                        "column_alias": "c" + text_type(c_index),
+                                        "column_alias": "c" + text(c_index),
                                         "column": col,
                                         "sort": col.is_id,
                                         "path": referenced_column_path,
@@ -751,40 +749,41 @@ class SnowflakeSchema(object):
                     sql_joins.append(
                         SQL_FROM
                         + sql_alias(
-                            sql_iso(get_ids), quote_column(rel.referenced.table.alias)
+                            sql_iso(get_ids), rel.referenced.table.alias
                         )
                     )
                 elif curr_join.children:
-                    full_name = quote_column(rel.table.name, rel.table.schema)
+                    full_name = quote_column(rel.table.schema, rel.table.name)
                     sql_joins.append(
-                        SQL_JOIN
-                        + sql_alias(full_name, quote_column(rel.table.alias))
+                        SQL_LEFT_JOIN
+                        + sql_alias(full_name, rel.table.alias)
                         + SQL_ON
-                        + sql_and(
-                            quote_column(const_col.column.name, rel.table.alias)
-                            + "="
+                        + SQL_AND.join(
+                            quote_column(rel.table.alias, const_col.column.name)
+                            + SQL_EQ
                             + quote_column(
-                                const_col.referenced.column.name,
                                 rel.referenced.table.alias,
+                                const_col.referenced.column.name,
                             )
                             for const_col in curr_join.join_columns
                         )
                     )
                 else:
                     full_name = quote_column(
-                        rel.referenced.table.name, rel.referenced.table.schema
+                        rel.referenced.table.schema,
+                        rel.referenced.table.name
                     )
                     sql_joins.append(
                         SQL_LEFT_JOIN
-                        + sql_alias(full_name, quote_column(rel.referenced.table.alias))
+                        + sql_alias(full_name, rel.referenced.table.alias)
                         + SQL_ON
-                        + sql_and(
+                        + SQL_AND.join(
                             quote_column(
-                                const_col.referenced.column.name,
                                 rel.referenced.table.alias,
+                                const_col.referenced.column.name,
                             )
                             + "="
-                            + quote_column(const_col.column.name, rel.table.alias)
+                            + quote_column( rel.table.alias, const_col.column.name,)
                             for const_col in curr_join.join_columns
                         )
                     )
@@ -793,12 +792,12 @@ class SnowflakeSchema(object):
             selects = []
             not_null_column_seen = False
             for ci, c in enumerate(self.columns):
-                if c.column_alias[1:] != text_type(ci):
+                if c.column_alias[1:] != text(ci):
                     Log.error("expecting consistency")
                 if c.nested_path[0] == nested_path[0]:
                     s = sql_alias(
-                        quote_column(c.column.column.name, c.table_alias),
-                        quote_column(c.column_alias),
+                        quote_column( c.table_alias, c.column.column.name,),
+                        c.column_alias,
                     )
                     if s == None:
                         Log.error("bug")
@@ -808,17 +807,17 @@ class SnowflakeSchema(object):
                     # PARENT ID REFERENCES
                     if c.column.is_id:
                         s = sql_alias(
-                            quote_column(c.column.column.name, c.table_alias),
-                            quote_column(c.column_alias),
+                            quote_column(c.table_alias, c.column.column.name, ),
+                            c.column_alias,
                         )
                         selects.append(s)
                         not_null_column_seen = True
                     else:
                         selects.append(
-                            sql_alias(SQL_NULL, quote_column(c.column_alias))
+                            sql_alias(SQL_NULL, c.column_alias)
                         )
                 else:
-                    selects.append(sql_alias(SQL_NULL, quote_column(c.column_alias)))
+                    selects.append(sql_alias(SQL_NULL, c.column_alias))
 
             if not_null_column_seen:
                 sql.append(SQL_SELECT + sql_list(selects) + SQL("").join(sql_joins))

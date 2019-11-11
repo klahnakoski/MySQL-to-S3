@@ -101,7 +101,10 @@ class JoinSQL(SQL):
         if not self.concat:
             return
         it = self.concat.__iter__()
-        v = it.__next__()
+        if PY2:
+            v = it.next()
+        else:
+            v = it.__next__()
         for vv in v:
             yield vv
         for v in it:
