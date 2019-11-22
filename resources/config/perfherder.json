@@ -49,9 +49,15 @@
 		],
 		"database": {
 			"schema": "treeherder",
-			"username": "activedata",
+			"username": "activedata2",
+			"ssl": {
+				"ca": "https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem"
+			},
 			"$ref": "~/private.json#treeherder"
 		}
+	},
+	"constants": {
+		"mysql_to_s3.snowflake_schema.DEBUG": false
 	},
 	"debug": {
 		"trace": true,

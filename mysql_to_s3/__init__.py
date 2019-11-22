@@ -12,6 +12,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import unicode_literals
 
+from mo_future import text
+
 from mo_dots import wrap
 from mo_logs import strings
 
@@ -66,8 +68,7 @@ def format_id(value):
     try:
         return int(value)
     except Exception:
-        return unicode(value)
-
+        return text(value)
 
 
 def lt(l, r):

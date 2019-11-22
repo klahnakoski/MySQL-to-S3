@@ -37,6 +37,7 @@ from mo_kwargs import override
 from mo_logs import Log, strings
 from mo_logs.exceptions import Explanation
 from mo_math.randoms import Random
+from mo_times import Timer
 from pyLibrary.sql import (
     SQL_SELECT,
     sql_list,
@@ -52,7 +53,7 @@ from pyLibrary.sql import (
     SQL_IS_NOT_NULL,
     SQL,
     SQL_AND, SQL_EQ)
-from pyLibrary.sql.mysql import MySQL, quote_column, sql_alias
+from pyLibrary.sql.mysql import MySQL, quote_column, sql_alias, quote_list
 
 DEBUG = False
 
@@ -127,7 +128,7 @@ class SnowflakeSchema(object):
                 information_schema.key_column_usage
             WHERE
                 referenced_column_name IS NOT NULL
-        """,
+            """,
             param=self.settings.database,
         )
 
@@ -136,21 +137,26 @@ class SnowflakeSchema(object):
 
         for r in self.settings.add_relations:
             try:
-                a, b = map(strings.trim, r.split("->"))
-                a = a.split(".")
-                b = b.split(".")
-                raw_relations.append(
-                    Data(
-                        table_schema=a[0],
-                        table_name=a[1],
-                        referenced_table_schema=b[0],
-                        referenced_table_name=b[1],
-                        referenced_column_name=b[2],
-                        constraint_name=Random.hex(20),
-                        column_name=a[2],
-                        ordinal_position=1,
-                    )
+                lhs, rhs = map(strings.trim, r.split("->"))
+                lhs = lhs.split(".")
+                rhs = rhs.split(".")
+                to_add = Data(
+                    ordinal_position=1,  # CAN ONLY HANDLE 1-COLUMN RELATIONS
+                    table_schema=lhs[0],
+                    table_name=lhs[1],
+                    column_name=lhs[2],
+                    referenced_table_schema=rhs[0],
+                    referenced_table_name=rhs[1],
+                    referenced_column_name=rhs[2],
                 )
+
+                # CHECK IF EXISTING
+                if jx.filter(raw_relations, {"eq":to_add}):
+                    Log.note("Relation {{relation}} already exists", relation=r)
+                    continue
+
+                to_add.constraint_name=Random.hex(20)
+                raw_relations.append(to_add)
             except Exception as e:
                 Log.error("Could not parse {{line|quote}}", line=r, cause=e)
 
@@ -736,6 +742,8 @@ class SnowflakeSchema(object):
         :param get_ids: SQL to get the ids, and used to select the documents returned
         :return:
         """
+        if not isinstance(get_ids, SQL):
+            Log.error("Expecting SQL to get some primary ids")
 
         sql = []
         for nested_path in self.all_nested_paths:
@@ -782,7 +790,7 @@ class SnowflakeSchema(object):
                                 rel.referenced.table.alias,
                                 const_col.referenced.column.name,
                             )
-                            + "="
+                            + SQL_EQ
                             + quote_column( rel.table.alias, const_col.column.name,)
                             for const_col in curr_join.join_columns
                         )
@@ -822,6 +830,72 @@ class SnowflakeSchema(object):
             if not_null_column_seen:
                 sql.append(SQL_SELECT + sql_list(selects) + SQL("").join(sql_joins))
         return sql
+
+    def construct_docs(self, cursor, append, please_stop):
+        """
+        :param cursor: ITERATOR OF RECORD TUPLES
+        :param append: METHOD TO CALL WITH CONSTRUCTED DOCUMENT
+        :return: (count, first, next, next_key)
+        number of documents added
+        the first document in the batch
+        the first document of the next batch
+        """
+        null_values = set(self.settings.snowflake.null_values) | {None}
+
+        count = 0
+
+        columns = tuple(wrap(c) for c in self.columns)
+        with Timer("Downloading from MySQL"):
+            curr_record = Null
+            rownum = 0
+            for row in cursor:
+                rownum += 1
+                if please_stop:
+                    Log.error("Got `please_stop` signal")
+
+                nested_path = []
+                next_record = None
+
+                for c, value in zip(columns, row):
+                    if value in null_values:
+                        continue
+                    if len(nested_path) < len(c.nested_path):
+                        nested_path = unwrap(c.nested_path)
+                        next_record = Data()
+                    next_record[c.put] = value
+
+                if len(nested_path) > 1:
+                    path = nested_path[-2]
+                    children = curr_record[path]
+                    if children == None:
+                        children = curr_record[path] = wrap([])
+                    if len(nested_path) > 2:
+                        parent_path = path
+                        for path in list(reversed(nested_path[0:-2:])):
+                            parent = children.last()
+                            relative_path = relative_field(path, parent_path)
+                            children = parent[relative_path]
+                            if children == None:
+                                children = parent[relative_path] = wrap([])
+                            parent_path = path
+
+                    children.append(next_record)
+                    continue
+
+                if curr_record == next_record:
+                    Log.error("not expected")
+
+                if curr_record:
+                    append(curr_record["id"], count)
+                    count += 1
+                curr_record = next_record
+
+            # DEAL WITH LAST RECORD
+            if curr_record:
+                append(curr_record["id"], count)
+                count += 1
+
+        Log.note("{{num}} documents ({{rownum}} db records)", num=count, rownum=rownum)
 
 
 def full_name_string(column):

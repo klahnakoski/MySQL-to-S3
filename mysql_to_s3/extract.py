@@ -26,7 +26,7 @@ from mo_dots import (
     coalesce,
 )
 from mo_files import File, TempFile
-from mo_future import text
+from mo_future import text, is_text
 from mo_kwargs import override
 from mo_logs import Log, startup, constants, machine_metadata
 from mo_threads import Signal, Thread, Queue, THREAD_STOP
@@ -34,6 +34,7 @@ from mo_times import Date, Duration
 from mo_times.timer import Timer
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
+from mysql_to_s3.utils import check_database
 from pyLibrary import convert, aws
 from pyLibrary.aws import s3
 from pyLibrary.env import elasticsearch
@@ -50,8 +51,8 @@ from pyLibrary.sql import (
     sql_iso,
     SQL_TRUE,
     SQL_AND,
-    SQL_AS, ConcatSQL)
-from pyLibrary.sql.mysql import MySQL, quote_column, sql_alias, quote_value
+    SQL_AS, ConcatSQL, SQL_GT, SQL_GE, SQL_EQ)
+from pyLibrary.sql.mysql import MySQL, quote_column, quote_value
 
 DEBUG = True
 
@@ -66,27 +67,7 @@ class Extract(object):
         # SOME PREP
         get_revision()
 
-        # VERIFY WE DO NOT HAVE TOO MANY OTHER PROCESSES WORKING ON STUFF
-        with MySQL(**kwargs.snowflake.database) as db:
-            processes = None
-            try:
-                processes = jx.filter(
-                    db.query("show processlist"),
-                    {
-                        "and": [
-                            {"neq": {"Command": "Sleep"}},
-                            {"neq": {"Info": "show processlist"}},
-                        ]
-                    },
-                )
-            except Exception as e:
-                Log.warning("no database", cause=e)
-
-            if processes:
-                if DEBUG:
-                    Log.warning("Processes are running\n{{list|json}}", list=processes)
-                else:
-                    Log.error("Processes are running\n{{list|json}}", list=processes)
+        check_database(kwargs.snowflake.database, DEBUG)
 
         extract.type = listwrap(extract.type)
         extract.start = listwrap(extract.start)
@@ -114,7 +95,9 @@ class Extract(object):
             "all batches", max=2 * coalesce(extract.threads, 1), silent=True
         )
 
-        self.bucket = s3.Bucket(self.settings.destination)
+        if not is_text(self.settings.destination):
+            self.bucket = s3.Bucket(self.settings.destination)
+
         if self.settings.notify:
             self.notify = aws.Queue(self.settings.notify)
         else:
@@ -333,7 +316,7 @@ class Extract(object):
                 )
 
             with Timer("assemble data"):
-                self.construct_docs(cursor, append, please_stop)
+                self.schema.construct_docs(cursor, append, please_stop)
 
             s3_file_name = ".".join(map(text, start_point))
             with Timer(
@@ -368,72 +351,6 @@ class Extract(object):
 
         # SUCCESS!!
         File(extract.last).write(convert.value2json([start_point, first_value]))
-
-    def construct_docs(self, cursor, append, please_stop):
-        """
-        :param cursor: ITERATOR OF RECORDS
-        :param append: METHOD TO CALL WITH CONSTRUCTED DOCUMENT
-        :return: (count, first, next, next_key)
-        number of documents added
-        the first document in the batch
-        the first document of the next batch
-        """
-        null_values = set(self.settings.snowflake.null_values) | {None}
-
-        count = 0
-        rownum = 0
-        columns = tuple(wrap(c) for c in self.schema.columns)
-        with Timer("Downloading from MySQL"):
-            curr_record = Null
-            rownum = 0
-            for row in cursor:
-                rownum += 1
-                if please_stop:
-                    Log.error("Got `please_stop` signal")
-
-                nested_path = []
-                next_record = None
-
-                for c, value in zip(columns, row):
-                    if value in null_values:
-                        continue
-                    if len(nested_path) < len(c.nested_path):
-                        nested_path = unwrap(c.nested_path)
-                        next_record = Data()
-                    next_record[c.put] = value
-
-                if len(nested_path) > 1:
-                    path = nested_path[-2]
-                    children = curr_record[path]
-                    if children == None:
-                        children = curr_record[path] = wrap([])
-                    if len(nested_path) > 2:
-                        parent_path = path
-                        for path in list(reversed(nested_path[0:-2:])):
-                            parent = children.last()
-                            relative_path = relative_field(path, parent_path)
-                            children = parent[relative_path]
-                            if children == None:
-                                children = parent[relative_path] = wrap([])
-                            parent_path = path
-
-                    children.append(next_record)
-                    continue
-
-                if curr_record == next_record:
-                    Log.error("not expected")
-
-                if curr_record:
-                    append(curr_record["id"], count)
-                    count += 1
-                curr_record = next_record
-
-            # DEAL WITH LAST RECORD
-            if curr_record:
-                append(curr_record["id"], count)
-                count += 1
-
-        Log.note("{{num}} documents ({{rownum}} db records)", num=count, rownum=rownum)
 
 
 def main():
@@ -472,19 +389,16 @@ def main():
         Log.stop()
 
 
-EQ = SQL("=")
-GTE = SQL(">=")
-GT = SQL(">")
 DUMMY_LIST = [Null] * 5
 
 
 def ineq(i, e, dim):
     if e < i:
-        return EQ
+        return SQL_EQ
     elif i == dim - 1:
-        return GTE
+        return SQL_GE
     else:
-        return GT
+        return SQL_GT
 
 
 if __name__ == "__main__":

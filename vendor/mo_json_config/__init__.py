@@ -14,7 +14,7 @@ from mo_future import is_text, is_binary
 import os
 
 import mo_dots
-from mo_dots import is_data, is_list, set_default, unwrap, wrap
+from mo_dots import is_data, is_list, set_default, unwrap, wrap, is_sequence
 from mo_files import File
 from mo_files.url import URL
 from mo_future import text
@@ -146,6 +146,10 @@ def _replace_locals(node, doc_path):
         for k, v in node.items():
             if k == "$ref":
                 ref = v
+            elif k == "$concat":
+                if not is_sequence(v):
+                    Log.error("$concat expects an array of strings")
+                return "".join(v)
             elif v == None:
                 continue
             else:

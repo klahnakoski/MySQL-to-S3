@@ -1,0 +1,64 @@
+{
+	"extract": {
+		"batch": 1,
+		"field": "id",
+		"ids": {"$concat": [
+			"select s.id ",
+			"from performance_datum d ",
+			"left join performance_signature s on s.id = d.signature_id ",
+			"where d.push_timestamp > DATE_ADD(DATE(NOW()), INTERVAL -1 DAY) and s.framework_id=10 ",
+			"group by s.id "
+		]},
+		"threads": 1
+	},
+	"destination": "signatures.json",
+	"snowflake": {
+		"fact_table": "performance_signature",
+		"show_foreign_keys": false,
+		"null_values": [
+			"-",
+			"unknown",
+			""
+		],
+		"add_relations": [
+		],
+		"exclude_path": [
+			"id.performance_alert",
+			"id.parent_signature"
+		],
+		"include": [
+		],
+		"exclude": [
+			"runnable_job",
+			"auth_user",
+			"job_log",
+			"text_log_step",
+			"performance_alert_summary"
+		],
+		"reference_only": [
+			"performance_framework.name",
+			"job.guid",
+			"user.email",
+			"repository.name",
+			"machine_platform.platform",
+			"failure_classification.name",
+			"option.name"
+		],
+		"database": {
+			"schema": "treeherder",
+			"username": "activedata2",
+			"ssl": {
+				"ca": "https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem"
+			},
+			"$ref": "~/private.json#treeherder"
+		}
+	},
+	"constants": {
+		"pyLibrary.env.http.default_headers": {"Referer": "MySQL-to-S3"},
+		"mysql_to_s3.snowflake_schema.DEBUG": true
+	},
+	"debug": {
+		"trace": true,
+		"cprofile": false
+	}
+}
