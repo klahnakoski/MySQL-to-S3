@@ -88,6 +88,8 @@ class ExtractOnce(object):
         ])
         sql = self.schema.get_sql(ids_sql)
 
+        # Log.note("{{sql}}", sql=sql)
+
         # WRITE PRETTY JSON TO FILE
         destination = File(self.settings.destination).add_suffix(batch)
 

@@ -24,7 +24,9 @@
 		],
 		"exclude_path": [
 			"id.performance_alert",
-			"id.parent_signature"
+			"id.parent_signature",
+			"id.performance_datum.repository",
+			"id.performance_datum.push_timestamp"
 		],
 		"include": [
 		],
@@ -36,6 +38,7 @@
 			"performance_alert_summary"
 		],
 		"reference_only": [
+			"push",
 			"performance_framework.name",
 			"job.guid",
 			"user.email",

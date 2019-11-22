@@ -9,4 +9,4 @@
 /vendor/pyLibrary/vendor/sqlite
 .svn
 /resources/pem
->>>>>>> master
+signatures*.json
