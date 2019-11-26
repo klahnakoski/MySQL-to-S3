@@ -183,6 +183,12 @@ class File(object):
         path[-1] = ".".join(parts)
         return File("/".join(path))
 
+    def add_extension(self, ext):
+        """
+        RETURN NEW FILE WITH EXTENSION ADDED (OLD EXTENSION IS A SUFFIX)
+        """
+        return File(self._filename + "." + text_type(ext))
+
     def set_name(self, name):
         """
         RETURN NEW FILE WITH GIVEN EXTENSION
@@ -573,7 +579,7 @@ def add_suffix(filename, suffix):
     path = filename.split("/")
     parts = path[-1].split(".")
     i = max(len(parts) - 2, 0)
-    parts[i] = parts[i] + text(suffix)
+    parts[i] = parts[i] + "." + text(suffix).strip(".")
     path[-1] = ".".join(parts)
     return File("/".join(path))
 

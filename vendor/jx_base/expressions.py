@@ -3166,6 +3166,7 @@ class SqlEqOp(Expression):
     data_type = BOOLEAN
 
     def __init__(self, terms):
+        Expression.__init__(self, terms)
         self.lhs, self.rhs = terms
 
     def __data__(self):

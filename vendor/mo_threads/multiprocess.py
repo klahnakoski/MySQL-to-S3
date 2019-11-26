@@ -225,6 +225,11 @@ else:
 
 
 class Command(object):
+    """
+    FASTER Process CLASS - OPENS A COMMAND_LINE APP (CMD on windows) AND KEEPS IT OPEN FOR MULTIPLE COMMANDS
+    EACH WORKING DIRECTORY WILL HAVE ITS OWN PROCESS, MULTIPLE PROCESSES WILL OPEN FOR THE SAME DIR IF MULTIPLE
+    THREADS ARE REQUESTING Commands
+    """
 
     available_locker = Lock("cmd lock")
     available_process = {}

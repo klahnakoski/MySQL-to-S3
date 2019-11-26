@@ -17,9 +17,7 @@ from collections import Mapping, namedtuple
 
 from mo_dots import Data, coalesce, unwraplist, listwrap, wrap
 from mo_files import File
-from mo_future import allocate_lock as _allocate_lock, text, first
-from mo_future import is_text
-from mo_future import zip_longest
+from mo_future import allocate_lock as _allocate_lock, text, first, is_text, zip_longest
 from mo_json import BOOLEAN, INTEGER, NESTED, NUMBER, OBJECT, STRING
 from mo_kwargs import override
 from mo_logs import Log
@@ -472,8 +470,8 @@ class Sqlite(DB):
                 )
                 result.data = curr.fetchall()
                 if self.debug and result.data:
-                    text = convert.table2csv(list(result.data))
-                    Log.note("Result:\n{{data|limit(100)|indent}}", data=text)
+                    csv = convert.table2csv(list(result.data))
+                    Log.note("Result:\n{{data|limit(100)|indent}}", data=csv)
             except Exception as e:
                 e = Except.wrap(e)
                 err = Except(
