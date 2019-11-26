@@ -20,7 +20,7 @@ class Counter(object):
     def __init__(self, start):
         self.count = start
 
-    def next(self, value):
+    def next(self, value=None):
         output = self.count
         self.count += 1
         return [output]
@@ -30,7 +30,6 @@ class Counter(object):
             self.count = start[0]
         else:
             self.count = 0
-
 
 class BatchCounter(object):
     def __init__(self, start, size, child):

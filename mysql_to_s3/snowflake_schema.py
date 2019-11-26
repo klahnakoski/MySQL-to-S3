@@ -886,13 +886,13 @@ class SnowflakeSchema(object):
                     Log.error("not expected")
 
                 if curr_record:
-                    append(curr_record["id"], count)
+                    append(curr_record["id"])
                     count += 1
                 curr_record = next_record
 
             # DEAL WITH LAST RECORD
             if curr_record:
-                append(curr_record["id"], count)
+                append(curr_record["id"])
                 count += 1
 
         Log.note("{{num}} documents ({{rownum}} db records)", num=count, rownum=rownum)

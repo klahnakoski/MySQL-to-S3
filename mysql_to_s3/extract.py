@@ -297,7 +297,8 @@ class Extract(object):
             parent_etl["revision"] = get_revision()
             parent_etl["machine"] = machine_metadata
 
-            def append(value, i):
+            counter = Counter(0)
+            def append(value):
                 """
                 :param value: THE DOCUMENT TO ADD
                 :return: PleaseStop
@@ -307,13 +308,14 @@ class Extract(object):
                         {
                             fact_table: elasticsearch.scrub(value),
                             "etl": {
-                                "id": i,
+                                "id": counter.count,
                                 "source": parent_etl,
                                 "timestamp": Date.now(),
                             },
                         }
                     )
                 )
+                counter.next()
 
             with Timer("assemble data"):
                 self.schema.construct_docs(cursor, append, please_stop)

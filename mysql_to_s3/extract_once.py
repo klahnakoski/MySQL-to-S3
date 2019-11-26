@@ -15,9 +15,10 @@ from __future__ import unicode_literals
 from contextlib import closing
 
 from jx_python import jx
-from mo_dots import Data, coalesce
+from mo_dots import Data, coalesce, set_default
 from mo_files import File
 from mo_future import text, is_text
+from mo_json import value2json
 from mo_kwargs import override
 from mo_logs import Log, startup, constants, machine_metadata
 from mo_logs.strings import expand_template
@@ -26,7 +27,6 @@ from mo_times import Date
 from mo_times.timer import Timer
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
 from mysql_to_s3.utils import check_database
-from pyLibrary import convert
 from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_revision
 from pyLibrary.sql import SQL_SELECT, SQL_FROM, SQL_WHERE, ConcatSQL, SQL_IN
@@ -70,54 +70,58 @@ class ExtractOnce(object):
                         (row[0] for row in cursor), self.settings.extract.batch
                     ):
                         self.queue.add({"batch": batch, "ids": ids})
+                    else:
+                        Log.alert("NO RECORDS")
 
     def extract(self, db, batch, ids, please_stop):
 
         fact_table = self.settings.snowflake.fact_table
 
         id = quote_column(self._extract.field)
-        ids_sql = ConcatSQL([
-            SQL_SELECT,
-            id,
-            SQL_FROM,
-            quote_column(self.settings.snowflake.fact_table),
-            SQL_WHERE,
-            id,
-            SQL_IN,
-            quote_list(ids)
-        ])
+        ids_sql = ConcatSQL(
+            [
+                SQL_SELECT,
+                id,
+                SQL_FROM,
+                quote_column(self.settings.snowflake.fact_table),
+                SQL_WHERE,
+                id,
+                SQL_IN,
+                quote_list(ids),
+            ]
+        )
         sql = self.schema.get_sql(ids_sql)
 
         # Log.note("{{sql}}", sql=sql)
 
         # WRITE PRETTY JSON TO FILE
-        destination = File(self.settings.destination).add_suffix(batch)
 
         parent_etl = Data(
             batch=batch, revision=get_revision(), machine=machine_metadata
         )
 
-        def append(value, i):
-            """
-            :param value: THE DOCUMENT TO ADD
-            :return: PleaseStop
-            """
-            destination.append(
-                convert.value2json(
-                    {
-                        fact_table: elasticsearch.scrub(value),
-                        "etl": {"id": i, "source": parent_etl, "timestamp": Date.now()},
-                    }
+        with Timer("Sending SQL"):
+            cursor = db.query(sql, stream=True, row_tuples=True)
+            data = []
+            self.schema.construct_docs(cursor, data.append, please_stop)
+            for i, d in enumerate(data):
+                destination = File(self.settings.destination).add_suffix(
+                    d[self.settings.extract.field]
                 )
-            )
-
-        with Timer(
-            "assemble data to {{filename}}",
-            param={"filename": destination.abspath},
-        ):
-            with Timer("Sending SQL"):
-                cursor = db.query(sql, stream=True, row_tuples=True)
-                self.schema.construct_docs(cursor, append, please_stop)
+                destination.write(
+                    value2json(
+                        set_default(
+                            {
+                                "etl": {
+                                    "id": i,
+                                    "source": parent_etl,
+                                    "timestamp": Date.now(),
+                                }
+                            },
+                            elasticsearch.scrub(d),
+                        )
+                    )
+                )
 
 
 def main():
