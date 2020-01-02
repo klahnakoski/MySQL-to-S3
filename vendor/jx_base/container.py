@@ -42,7 +42,7 @@ def _delayed_imports():
 
 class Container(object):
     """
-    CONTAINERS HOLD MULTIPLE FACTS AND CAN HANDLE
+    CONTAINERS HOLD MULTIPLE INDICES AND CAN HANDLE
     GENERAL JSON QUERY EXPRESSIONS ON ITS CONTENTS
     METADATA FOR A Container IS CALLED A Namespace
     """
@@ -112,10 +112,6 @@ class Container(object):
         raise NotImplementedError()
 
     def window(self, window):
-        raise NotImplementedError()
-
-    def having(self, having):
-        _ = having
         raise NotImplementedError()
 
     def format(self, format):

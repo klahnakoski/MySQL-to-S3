@@ -80,8 +80,13 @@ def datetime(value):
     else:
         value = milli2datetime(value)
 
-    return datetime2string(value, "%Y-%m-%d %H:%M:%S.%f").rstrip(".000000").rstrip("000")
-
+    output = datetime2string(value, "%Y-%m-%d %H:%M:%S.%f")
+    if output.endswith(".000000"):
+        return output[:-7]
+    elif output.endswith("000"):
+        return output[:-3]
+    else:
+        return output
 
 @formatter
 def unicode(value):
@@ -378,9 +383,12 @@ def between(value, prefix, suffix, start=0):
         return None
     s += len(prefix)
 
-    e = value.find(suffix, s)
-    if e == -1:
-        return None
+    if suffix is None:
+        e = len(value)
+    else:
+        e = value.find(suffix, s)
+        if e == -1:
+            return None
 
     s = value.rfind(prefix, start, e) + len(prefix)  # WE KNOW THIS EXISTS, BUT THERE MAY BE A RIGHT-MORE ONE
 
@@ -530,7 +538,7 @@ THE REST OF THIS FILE IS TEMPLATE EXPANSION CODE USED BY mo-logs
 def expand_template(template, value):
     """
     :param template: A UNICODE STRING WITH VARIABLE NAMES IN MOUSTACHES `{{.}}`
-    :param value: Data HOLDING THE PARAMTER VALUES
+    :param value: Data HOLDING THE PARAMETER VALUES
     :return: UNICODE STRING WITH VARIABLES EXPANDED
     """
     try:

@@ -21,7 +21,7 @@ from mo_future import allocate_lock as _allocate_lock, text, first, is_text, zip
 from mo_json import BOOLEAN, INTEGER, NESTED, NUMBER, OBJECT, STRING
 from mo_kwargs import override
 from mo_logs import Log
-from mo_logs.exceptions import ERROR, Except, extract_stack, format_trace
+from mo_logs.exceptions import ERROR, Except, get_stacktrace, format_trace
 from mo_logs.strings import quote
 from mo_math.stats import percentile
 from mo_threads import Lock, Queue, Thread, Till
@@ -208,7 +208,7 @@ class Sqlite(DB):
                 if t.thread is thread:
                     parent = t
 
-        output = Transaction(self, parent=parent)
+        output = Transaction(self, parent=parent, thread=thread)
         self.available_transactions.append(output)
         return output
 
@@ -233,7 +233,7 @@ class Sqlite(DB):
         signal = _allocate_lock()
         signal.acquire()
         result = Data()
-        trace = extract_stack(1) if self.get_trace else None
+        trace = get_stacktrace(1) if self.get_trace else None
 
         if self.get_trace:
             current_thread = Thread.current()
@@ -276,7 +276,7 @@ class Sqlite(DB):
             library_loc, "vendor/sqlite/libsqlitefunctions.so"
         ).abspath
         try:
-            trace = extract_stack(0)[0]
+            trace = get_stacktrace(0)[0]
             if self.upgrade:
                 if os.name == "nt":
                     file = File.new_instance(
@@ -489,7 +489,7 @@ class Sqlite(DB):
 
 
 class Transaction(object):
-    def __init__(self, db, parent=None):
+    def __init__(self, db, parent, thread):
         self.db = db
         self.locker = Lock("transaction " + text(id(self)) + " todo lock")
         self.todo = []
@@ -497,7 +497,7 @@ class Transaction(object):
         self.end_of_life = False
         self.exception = None
         self.parent = parent
-        self.thread = parent.thread if parent else Thread.current()
+        self.thread = thread
 
     def __enter__(self):
         return self
@@ -516,14 +516,14 @@ class Transaction(object):
 
     def transaction(self):
         with self.db.locker:
-            output = Transaction(self.db, parent=self)
+            output = Transaction(self.db, parent=self, thread=self.thread)
             self.db.available_transactions.append(output)
         return output
 
     def execute(self, command):
         if self.end_of_life:
             Log.error("Transaction is dead")
-        trace = extract_stack(1) if self.db.get_trace else None
+        trace = get_stacktrace(1) if self.db.get_trace else None
         with self.locker:
             self.todo.append(CommandItem(command, None, None, trace, self))
 
@@ -554,7 +554,7 @@ class Transaction(object):
         signal = _allocate_lock()
         signal.acquire()
         result = Data()
-        trace = extract_stack(1) if self.db.get_trace else None
+        trace = get_stacktrace(1) if self.db.get_trace else None
         self.db.queue.add(CommandItem(query, result, signal, trace, self))
         signal.acquire()
         if result.exception:
@@ -590,6 +590,13 @@ def sql_alias(value, alias):
     if not isinstance(value, SQL) or not is_text(alias):
         Log.error("Expecting (SQL, text) parameters")
     return ConcatSQL((value, SQL_AS, quote_column(alias)))
+
+
+def sql_call(func_name, parameters):
+    return ConcatSQL((
+        SQL(func_name),
+        sql_iso(JoinSQL(SQL_COMMA, parameters))
+    ))
 
 
 def quote_value(value):
