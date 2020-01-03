@@ -43,7 +43,7 @@
 		],
 		"name_relations": {
 			"performance_alert_summary.id <- performance_alert.summary_id": "details",
-			"performance_alert_summary.id <- performance_alert.related_summary_id": "see_also",
+			"performance_alert_summary.id <- performance_alert.related_summary_id": "see_also"
 		},
 		"include": [
 		],

@@ -55,7 +55,7 @@ from pyLibrary.sql import (
     SQL_AND, SQL_EQ)
 from pyLibrary.sql.mysql import MySQL, quote_column, sql_alias, quote_list
 
-DEBUG = False
+DEBUG = True
 
 
 class SnowflakeSchema(object):

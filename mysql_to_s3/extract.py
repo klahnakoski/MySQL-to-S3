@@ -14,17 +14,9 @@ from __future__ import unicode_literals
 
 from contextlib import closing
 
-from jx_base.expressions import last
-from jx_python import jx
-from mo_dots import (
-    Data,
-    wrap,
-    Null,
-    listwrap,
-    unwrap,
-    relative_field,
-    coalesce,
-)
+from jx_elasticsearch import elasticsearch
+from mo_dots import Null, listwrap, coalesce
+from mo_dots.lists import last
 from mo_files import File, TempFile
 from mo_future import text, is_text
 from mo_kwargs import override
@@ -37,7 +29,6 @@ from mysql_to_s3.snowflake_schema import SnowflakeSchema
 from mysql_to_s3.utils import check_database
 from pyLibrary import convert, aws
 from pyLibrary.aws import s3
-from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_revision
 from pyLibrary.sql import (
     SQL,
@@ -51,7 +42,13 @@ from pyLibrary.sql import (
     sql_iso,
     SQL_TRUE,
     SQL_AND,
-    SQL_AS, ConcatSQL, SQL_GT, SQL_GE, SQL_EQ)
+    SQL_AS,
+    ConcatSQL,
+    SQL_GT,
+    SQL_GE,
+    SQL_EQ,
+    SQL_LT,
+)
 from pyLibrary.sql.mysql import MySQL, quote_column, quote_value
 
 DEBUG = True
@@ -115,7 +112,7 @@ class Extract(object):
                         filename=self.settings.extract.last,
                     )
                     first_value = list(
-                        (listwrap(content[0]) + DUMMY_LIST)[: len(self._extract.type):]
+                        (listwrap(content[0]) + DUMMY_LIST)[: len(self._extract.type) :]
                     )
                     start_point = tuple(first_value)
                     #     Date(s) + Duration(b) * c if t == 'time' else s + b * c
@@ -216,9 +213,9 @@ class Extract(object):
                         + quote_value(Date(v) if t == "time" else v)
                         for e, (f, v, t) in enumerate(
                             zip(
-                                self._extract.field[0: i + 1:],
+                                self._extract.field[0 : i + 1 :],
                                 first,
-                                self._extract.type[0: i + 1:],
+                                self._extract.type[0 : i + 1 :],
                             )
                         )
                     )
@@ -236,7 +233,7 @@ class Extract(object):
             where += (
                 SQL_AND
                 + quote_column(last(self._extract.field))
-                + " < "
+                + SQL_LT
                 + quote_value((Date(last(first)) + Duration(batch_size)))
             )
             limit = ""
@@ -245,7 +242,8 @@ class Extract(object):
         for t, f in zip(self._extract.type, self._extract.field):
             if t == "time":
                 selects.append(
-                    "CAST" + sql_iso(ConcatSQL((quote_column(f), SQL_AS, SQL("DATETIME(6)"))))
+                    "CAST"
+                    + sql_iso(ConcatSQL((quote_column(f), SQL_AS, SQL("DATETIME(6)"))))
                 )
             else:
                 selects.append(quote_column(f))
@@ -298,6 +296,7 @@ class Extract(object):
             parent_etl["machine"] = machine_metadata
 
             counter = Counter(0)
+
             def append(value):
                 """
                 :param value: THE DOCUMENT TO ADD

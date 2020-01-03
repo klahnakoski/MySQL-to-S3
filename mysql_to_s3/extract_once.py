@@ -14,6 +14,7 @@ from __future__ import unicode_literals
 
 from contextlib import closing
 
+from jx_elasticsearch import elasticsearch
 from jx_python import jx
 from mo_dots import Data, coalesce, set_default
 from mo_files import File
@@ -27,7 +28,6 @@ from mo_times import Date
 from mo_times.timer import Timer
 from mysql_to_s3.snowflake_schema import SnowflakeSchema
 from mysql_to_s3.utils import check_database
-from pyLibrary.env import elasticsearch
 from pyLibrary.env.git import get_revision
 from pyLibrary.sql import SQL_SELECT, SQL_FROM, SQL_WHERE, ConcatSQL, SQL_IN
 from pyLibrary.sql.mysql import MySQL, quote_column, quote_list
