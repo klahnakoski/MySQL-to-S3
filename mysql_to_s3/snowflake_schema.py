@@ -53,7 +53,7 @@ from pyLibrary.sql import (
     SQL_IS_NOT_NULL,
     SQL,
     SQL_AND, SQL_EQ)
-from pyLibrary.sql.mysql import MySQL, quote_column, sql_alias, quote_list
+from pyLibrary.sql.mysql import MySQL, quote_column, sql_alias
 
 DEBUG = True
 
