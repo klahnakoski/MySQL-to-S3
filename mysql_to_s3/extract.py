@@ -48,7 +48,7 @@ from pyLibrary.sql import (
     SQL_GE,
     SQL_EQ,
     SQL_LT,
-)
+    SQL_IN)
 from pyLibrary.sql.mysql import MySQL, quote_column, quote_value
 
 DEBUG = True
@@ -204,6 +204,7 @@ class Extract(object):
     def _build_list_sql(self, db, first, batch_size):
         # TODO: ENSURE THE LAST COLUMN IS THE id
         if first:
+            # BUILD LOGIC FOR TUPLE COMPARISION:  self._extract.field >= first
             dim = len(self._extract.field)
             where = SQL_OR.join(
                 sql_iso(
@@ -277,7 +278,7 @@ class Extract(object):
             + self.settings.snowflake.fact_table
             + SQL_WHERE
             + id
-            + " in "
+            + SQL_IN
             + sql_iso(sql_list(map(quote_value, data)))
         )
         sql = self.schema.get_sql(ids)
