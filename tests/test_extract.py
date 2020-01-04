@@ -17,7 +17,7 @@ from mo_files import File
 from mo_logs import Log, startup, constants
 from mo_testing.fuzzytestcase import FuzzyTestCase
 from mo_times.timer import Timer
-from mysql_to_s3 import snowflake_schema
+from pyLibrary.sql import mysql_snowflake_extractor
 from mysql_to_s3.extract import Extract
 from pyLibrary.sql.mysql import MySQL, execute_file
 
@@ -29,7 +29,7 @@ class TestExtract(FuzzyTestCase):
     @classmethod
     def setUpClass(cls):
         Log.start(settings.debug)
-        snowflake_schema.DEBUG = (True,)
+        mysql_snowflake_extractor.DEBUG = True
 
         with Timer("setup database"):
             try:

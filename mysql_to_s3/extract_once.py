@@ -26,7 +26,7 @@ from mo_logs.strings import expand_template
 from mo_threads import Signal, Thread, Queue
 from mo_times import Date
 from mo_times.timer import Timer
-from mysql_to_s3.snowflake_schema import SnowflakeSchema
+from pyLibrary.sql.mysql_snowflake_extractor import MySqlSnowflakeExtractor
 from mysql_to_s3.utils import check_database
 from pyLibrary.env.git import get_revision
 from pyLibrary.sql import SQL_SELECT, SQL_FROM, SQL_WHERE, ConcatSQL, SQL_IN
@@ -39,7 +39,7 @@ class ExtractOnce(object):
     @override
     def __init__(self, kwargs=None):
         self.settings = kwargs
-        self.schema = SnowflakeSchema(self.settings.snowflake)
+        self.schema = MySqlSnowflakeExtractor(self.settings.snowflake)
         self._extract = extract = kwargs.extract
 
         # SOME PREP

@@ -52,13 +52,18 @@ from pyLibrary.sql import (
     SQL_STAR,
     SQL_IS_NOT_NULL,
     SQL,
-    SQL_AND, SQL_EQ)
+    SQL_AND,
+    SQL_EQ,
+    ConcatSQL,
+    SQL_LIMIT,
+    SQL_ONE,
+)
 from pyLibrary.sql.mysql import MySQL, quote_column, sql_alias
 
 DEBUG = True
 
 
-class SnowflakeSchema(object):
+class MySqlSnowflakeExtractor(object):
     @override
     def __init__(self, kwargs=None):
         self.settings = kwargs
@@ -94,13 +99,15 @@ class SnowflakeSchema(object):
                 ordering.append(ci)
 
         union_all_sql = SQL_UNION_ALL.join(sql)
-        union_all_sql = (
-            SQL_SELECT
-            + SQL_STAR
-            + SQL_FROM
-            + sql_alias(sql_iso(union_all_sql), "a")
-            + SQL_ORDERBY
-            + sql_list(sort)
+        union_all_sql = ConcatSQL(
+            (
+                SQL_SELECT,
+                SQL_STAR,
+                SQL_FROM,
+                sql_alias(sql_iso(union_all_sql), "a"),
+                SQL_ORDERBY,
+                sql_list(sort),
+            )
         )
         return union_all_sql
 
@@ -151,11 +158,11 @@ class SnowflakeSchema(object):
                 )
 
                 # CHECK IF EXISTING
-                if jx.filter(raw_relations, {"eq":to_add}):
+                if jx.filter(raw_relations, {"eq": to_add}):
                     Log.note("Relation {{relation}} already exists", relation=r)
                     continue
 
-                to_add.constraint_name=Random.hex(20)
+                to_add.constraint_name = Random.hex(20)
                 raw_relations.append(to_add)
             except Exception as e:
                 Log.error("Could not parse {{line|quote}}", line=r, cause=e)
@@ -391,9 +398,16 @@ class SnowflakeSchema(object):
             if position.name != "__ids__":
                 # USED TO CONFIRM WE CAN ACCESS THE TABLE (WILL THROW ERROR WHEN IF IT FAILS)
                 self.db.query(
-                    "SELECT * FROM "
-                    + quote_column(position.schema, position.name)
-                    + " LIMIT 1"
+                    ConcatSQL(
+                        (
+                            SQL_SELECT,
+                            SQL_STAR,
+                            SQL_FROM,
+                            quote_column(position.schema, position.name),
+                            SQL_LIMIT,
+                            SQL_ONE,
+                        )
+                    )
                 )
 
             if position.name in reference_all_tables:
@@ -755,44 +769,65 @@ class SnowflakeSchema(object):
                 rel = curr_join.join_columns[0]
                 if i == 0:
                     sql_joins.append(
-                        SQL_FROM
-                        + sql_alias(
-                            sql_iso(get_ids), rel.referenced.table.alias
+                        ConcatSQL(
+                            (
+                                SQL_FROM,
+                                sql_alias(sql_iso(get_ids), rel.referenced.table.alias),
+                            )
                         )
                     )
                 elif curr_join.children:
                     full_name = quote_column(rel.table.schema, rel.table.name)
                     sql_joins.append(
-                        SQL_INNER_JOIN
-                        + sql_alias(full_name, rel.table.alias)
-                        + SQL_ON
-                        + SQL_AND.join(
-                            quote_column(rel.table.alias, const_col.column.name)
-                            + SQL_EQ
-                            + quote_column(
-                                rel.referenced.table.alias,
-                                const_col.referenced.column.name,
+                        ConcatSQL(
+                            (
+                                SQL_INNER_JOIN,
+                                sql_alias(full_name, rel.table.alias),
+                                SQL_ON,
+                                SQL_AND.join(
+                                    ConcatSQL(
+                                        (
+                                            quote_column(
+                                                rel.table.alias, const_col.column.name
+                                            ),
+                                            SQL_EQ,
+                                            quote_column(
+                                                rel.referenced.table.alias,
+                                                const_col.referenced.column.name,
+                                            ),
+                                        )
+                                    )
+                                    for const_col in curr_join.join_columns
+                                ),
                             )
-                            for const_col in curr_join.join_columns
                         )
                     )
                 else:
                     full_name = quote_column(
-                        rel.referenced.table.schema,
-                        rel.referenced.table.name
+                        rel.referenced.table.schema, rel.referenced.table.name
                     )
                     sql_joins.append(
-                        SQL_LEFT_JOIN
-                        + sql_alias(full_name, rel.referenced.table.alias)
-                        + SQL_ON
-                        + SQL_AND.join(
-                            quote_column(
-                                rel.referenced.table.alias,
-                                const_col.referenced.column.name,
+                        ConcatSQL(
+                            (
+                                SQL_LEFT_JOIN,
+                                sql_alias(full_name, rel.referenced.table.alias),
+                                SQL_ON,
+                                SQL_AND.join(
+                                    ConcatSQL(
+                                        (
+                                            quote_column(
+                                                rel.referenced.table.alias,
+                                                const_col.referenced.column.name,
+                                            ),
+                                            SQL_EQ,
+                                            quote_column(
+                                                rel.table.alias, const_col.column.name
+                                            ),
+                                        )
+                                    )
+                                    for const_col in curr_join.join_columns
+                                ),
                             )
-                            + SQL_EQ
-                            + quote_column( rel.table.alias, const_col.column.name,)
-                            for const_col in curr_join.join_columns
                         )
                     )
 
@@ -804,7 +839,7 @@ class SnowflakeSchema(object):
                     Log.error("expecting consistency")
                 if c.nested_path[0] == nested_path[0]:
                     s = sql_alias(
-                        quote_column( c.table_alias, c.column.column.name,),
+                        quote_column(c.table_alias, c.column.column.name),
                         c.column_alias,
                     )
                     if s == None:
@@ -815,15 +850,13 @@ class SnowflakeSchema(object):
                     # PARENT ID REFERENCES
                     if c.column.is_id:
                         s = sql_alias(
-                            quote_column(c.table_alias, c.column.column.name, ),
+                            quote_column(c.table_alias, c.column.column.name),
                             c.column_alias,
                         )
                         selects.append(s)
                         not_null_column_seen = True
                     else:
-                        selects.append(
-                            sql_alias(SQL_NULL, c.column_alias)
-                        )
+                        selects.append(sql_alias(SQL_NULL, c.column_alias))
                 else:
                     selects.append(sql_alias(SQL_NULL, c.column_alias))
 

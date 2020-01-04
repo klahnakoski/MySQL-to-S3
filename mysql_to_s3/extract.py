@@ -25,7 +25,7 @@ from mo_threads import Signal, Thread, Queue, THREAD_STOP
 from mo_times import Date, Duration
 from mo_times.timer import Timer
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
-from mysql_to_s3.snowflake_schema import SnowflakeSchema
+from pyLibrary.sql.mysql_snowflake_extractor import MySqlSnowflakeExtractor
 from mysql_to_s3.utils import check_database
 from pyLibrary import convert, aws
 from pyLibrary.aws import s3
@@ -48,8 +48,10 @@ from pyLibrary.sql import (
     SQL_GE,
     SQL_EQ,
     SQL_LT,
-    SQL_IN)
+    SQL_IN,
+)
 from pyLibrary.sql.mysql import MySQL, quote_column, quote_value
+from pyLibrary.sql.sqlite import sql_call
 
 DEBUG = True
 
@@ -58,7 +60,7 @@ class Extract(object):
     @override
     def __init__(self, kwargs=None):
         self.settings = kwargs
-        self.schema = SnowflakeSchema(self.settings.snowflake)
+        self.schema = MySqlSnowflakeExtractor(self.settings.snowflake)
         self._extract = extract = kwargs.extract
 
         # SOME PREP
@@ -209,9 +211,13 @@ class Extract(object):
             where = SQL_OR.join(
                 sql_iso(
                     SQL_AND.join(
-                        quote_column(f)
-                        + ineq(i, e, dim)
-                        + quote_value(Date(v) if t == "time" else v)
+                        ConcatSQL(
+                            (
+                                quote_column(f),
+                                ineq(i, e, dim),
+                                quote_value(Date(v) if t == "time" else v),
+                            )
+                        )
                         for e, (f, v, t) in enumerate(
                             zip(
                                 self._extract.field[0 : i + 1 :],
@@ -231,33 +237,34 @@ class Extract(object):
         if last(self._extract.type) != "time":
             limit = SQL_LIMIT + quote_value(batch_size)
         else:
-            where += (
-                SQL_AND
-                + quote_column(last(self._extract.field))
-                + SQL_LT
-                + quote_value((Date(last(first)) + Duration(batch_size)))
+            where += ConcatSQL(
+                (
+                    SQL_AND,
+                    quote_column(last(self._extract.field)),
+                    SQL_LT,
+                    quote_value((Date(last(first)) + Duration(batch_size))),
+                )
             )
             limit = ""
 
         selects = []
         for t, f in zip(self._extract.type, self._extract.field):
             if t == "time":
-                selects.append(
-                    "CAST"
-                    + sql_iso(ConcatSQL((quote_column(f), SQL_AS, SQL("DATETIME(6)"))))
-                )
+                selects.append(sql_call("CAST", (ConcatSQL((quote_column(f), SQL_AS, SQL("DATETIME(6)"))),)))
             else:
                 selects.append(quote_column(f))
-        sql = (
-            SQL_SELECT
-            + sql_list(selects)
-            + SQL_FROM
-            + self.settings.snowflake.fact_table
-            + SQL_WHERE
-            + where
-            + SQL_ORDERBY
-            + sql_list(quote_column(f) for f in self._extract.field)
-            + limit
+        sql = ConcatSQL(
+            (
+                SQL_SELECT,
+                sql_list(selects),
+                SQL_FROM,
+                self.settings.snowflake.fact_table,
+                SQL_WHERE,
+                where,
+                SQL_ORDERBY,
+                sql_list(quote_column(f) for f in self._extract.field),
+                limit,
+            )
         )
 
         return sql
@@ -271,15 +278,17 @@ class Extract(object):
         )
 
         id = quote_column(self._extract.field.last())
-        ids = (
-            SQL_SELECT
-            + id
-            + SQL_FROM
-            + self.settings.snowflake.fact_table
-            + SQL_WHERE
-            + id
-            + SQL_IN
-            + sql_iso(sql_list(map(quote_value, data)))
+        ids = ConcatSQL(
+            (
+                SQL_SELECT,
+                id,
+                SQL_FROM,
+                self.settings.snowflake.fact_table,
+                SQL_WHERE,
+                id,
+                SQL_IN,
+                sql_iso(sql_list(map(quote_value, data))),
+            )
         )
         sql = self.schema.get_sql(ids)
 
