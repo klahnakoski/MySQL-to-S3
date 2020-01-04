@@ -16,6 +16,7 @@ from mo_logs import Log
 from mo_times import Date, Duration
 from mo_math import round
 
+
 class Counter(object):
     def __init__(self, start):
         self.count = start
@@ -31,6 +32,7 @@ class Counter(object):
         else:
             self.count = 0
 
+
 class BatchCounter(object):
     def __init__(self, start, size, child):
         self.next_output = start
@@ -40,10 +42,10 @@ class BatchCounter(object):
     def next(self, value):
         output = self.next_output
         c = self.child.next(value[1:])
-        if c[0] >= self.size-1:
+        if c[0] >= self.size - 1:
             self.next_output += 1
             self.child.reset()
-        return [output]+c
+        return [output] + c
 
     def reset(self, start=None):
         if start:
@@ -55,7 +57,6 @@ class BatchCounter(object):
 
 
 class DurationCounter(object):
-
     def __init__(self, start, duration, child):
         self.duration = Duration(duration)
         self.start = self.last_value = Date(start).floor(self.duration)
@@ -68,7 +69,7 @@ class DurationCounter(object):
             Log.error("Expecting strictly increasing")
         self.last_value = v
 
-        key = round((v.floor(self.duration)-self.start)/self.duration, decimal=0)
+        key = round((v.floor(self.duration) - self.start) / self.duration, decimal=0)
         if key != self.batch:
             self.child.reset()
             self.batch = key
@@ -83,4 +84,3 @@ class DurationCounter(object):
         else:
             self.start = Date.MIN
             self.child.reset()
-

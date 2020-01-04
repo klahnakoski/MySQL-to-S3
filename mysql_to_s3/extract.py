@@ -250,7 +250,12 @@ class Extract(object):
         selects = []
         for t, f in zip(self._extract.type, self._extract.field):
             if t == "time":
-                selects.append(sql_call("CAST", (ConcatSQL((quote_column(f), SQL_AS, SQL("DATETIME(6)"))),)))
+                selects.append(
+                    sql_call(
+                        "CAST",
+                        (ConcatSQL((quote_column(f), SQL_AS, SQL("DATETIME(6)"))),),
+                    )
+                )
             else:
                 selects.append(quote_column(f))
         sql = ConcatSQL(

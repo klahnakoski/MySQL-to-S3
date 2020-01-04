@@ -26,11 +26,11 @@ from mo_logs.strings import expand_template
 from mo_threads import Signal, Thread, Queue
 from mo_times import Date
 from mo_times.timer import Timer
-from pyLibrary.sql.mysql_snowflake_extractor import MySqlSnowflakeExtractor
 from mysql_to_s3.utils import check_database
 from pyLibrary.env.git import get_revision
 from pyLibrary.sql import SQL_SELECT, SQL_FROM, SQL_WHERE, ConcatSQL, SQL_IN
 from pyLibrary.sql.mysql import MySQL, quote_column, quote_list
+from pyLibrary.sql.mysql_snowflake_extractor import MySqlSnowflakeExtractor
 
 DEBUG = True
 
