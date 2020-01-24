@@ -5,7 +5,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http:# mozilla.org/MPL/2.0/.
 #
-# Author: Kyle Lahnakoski (kyle@lahnakoski.com)
+# Contact: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 
 """
@@ -19,7 +19,7 @@ LANGUAGE, BUT WE KEEP CODE HERE SO THERE IS LESS OF IT
 """
 from __future__ import absolute_import, division, unicode_literals
 
-from jx_base.expressions.expression import Expression
+from jx_base.expressions.expression import jx_expression, Expression, _jx_expression
 from jx_base.utils import is_variable_name
 from mo_dots import wrap, is_container
 from mo_future import is_text

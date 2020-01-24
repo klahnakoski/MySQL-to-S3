@@ -5,7 +5,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 #
-# Author: Kyle Lahnakoski (kyle@lahnakoski.com)
+# Contact: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 from __future__ import absolute_import, division, unicode_literals
 
@@ -88,9 +88,10 @@ class Log(object):
         if settings.constants:
             constants.set(settings.constants)
 
-        if settings.log:
+        logs = coalesce(settings.log, settings.logs)
+        if logs:
             cls.logging_multi = StructuredLogger_usingMulti()
-            for log in listwrap(settings.log):
+            for log in listwrap(logs):
                 Log.add_log(Log.new_instance(log))
 
             from mo_logs.log_usingThread import StructuredLogger_usingThread
@@ -112,16 +113,19 @@ class Log(object):
 
         if settings["class"]:
             if settings["class"].startswith("logging.handlers."):
-                from mo_logs.log_usingLogger import StructuredLogger_usingLogger
+                from mo_logs.log_usingHandler import StructuredLogger_usingHandler
 
-                return StructuredLogger_usingLogger(settings)
+                return StructuredLogger_usingHandler(settings)
             else:
                 with suppress_exception:
                     from mo_logs.log_usingLogger import make_log_from_settings
 
                     return make_log_from_settings(settings)
-                  # OH WELL :(
+                # OH WELL :(
 
+        if settings.log_type == "logger":
+            from mo_logs.log_usingLogger import StructuredLogger_usingLogger
+            return StructuredLogger_usingLogger(settings)
         if settings.log_type == "file" or settings.file:
             return StructuredLogger_usingFile(settings.file)
         if settings.log_type == "file" or settings.filename:

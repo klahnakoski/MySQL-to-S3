@@ -5,7 +5,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http:# mozilla.org/MPL/2.0/.
 #
-# Author: Kyle Lahnakoski (kyle@lahnakoski.com)
+# Contact: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 from __future__ import absolute_import, division, unicode_literals
 
@@ -18,5 +18,5 @@ class BooleanOp(BooleanOp_):
         return assign_and_eval(
             "f",
             Python[self.term].to_python(),
-            "False if f is False or f is None else True",
+            "bool(f)",
         )

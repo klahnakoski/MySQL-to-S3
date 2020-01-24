@@ -5,7 +5,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 #
-# Author: Kyle Lahnakoski (kyle@lahnakoski.com)
+# Contact: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 
 from __future__ import absolute_import
@@ -32,13 +32,14 @@ from mo_dots import (
     startswith_field,
     listwrap,
 )
-from mo_future import text
+from mo_dots.lists import last
+from mo_future import text, sort_using_key, first
 from mo_kwargs import override
 from mo_logs import Log, strings
 from mo_logs.exceptions import Explanation
 from mo_math.randoms import Random
 from mo_times import Timer
-from pyLibrary.sql import (
+from mo_sql import (
     SQL_SELECT,
     sql_list,
     SQL_NULL,
@@ -58,7 +59,7 @@ from pyLibrary.sql import (
     SQL_LIMIT,
     SQL_ONE,
 )
-from pyLibrary.sql.mysql import MySQL, quote_column, sql_alias
+from jx_mysql.mysql import MySQL, quote_column, sql_alias
 
 DEBUG = True
 
@@ -67,7 +68,11 @@ class MySqlSnowflakeExtractor(object):
     @override
     def __init__(self, kwargs=None):
         self.settings = kwargs
-        self.settings.exclude = set(listwrap(self.settings.exclude))
+        excludes = listwrap(self.settings.exclude)
+        self.settings.exclude = set(e for e in excludes if len(split_field(e)) == 1)
+        self.settings.exclude_columns = set(
+            p for e in excludes for p in [tuple(split_field(e))] if len(p) > 1
+        )
         self.settings.exclude_path = list(
             map(split_field, listwrap(self.settings.exclude_path))
         )
@@ -82,9 +87,12 @@ class MySqlSnowflakeExtractor(object):
 
         with Explanation("scan database", debug=DEBUG):
             self.db = MySQL(**kwargs.database)
+            self.settings.database.schema = self.db.settings.schema
             with self.db:
                 with self.db.transaction():
                     self._scan_database()
+        if not self.settings.database.schema:
+            Log.error("you must provide a `database.schema`")
 
     def get_sql(self, get_ids):
         sql = self._compose_sql(get_ids)
@@ -146,7 +154,11 @@ class MySqlSnowflakeExtractor(object):
             try:
                 lhs, rhs = map(strings.trim, r.split("->"))
                 lhs = lhs.split(".")
+                if len(lhs) == 2:
+                    lhs = [self.settings.database.schema] + lhs
                 rhs = rhs.split(".")
+                if len(rhs) == 2:
+                    rhs = [self.settings.database.schema] + rhs
                 to_add = Data(
                     ordinal_position=1,  # CAN ONLY HANDLE 1-COLUMN RELATIONS
                     table_schema=lhs[0],
@@ -203,8 +215,7 @@ class MySqlSnowflakeExtractor(object):
                 c.constraint_name,
                 k.ordinal_position,
                 k.column_name
-        """,
-            param=self.settings.database,
+            """
         )
 
         # ORGANIZE, AND PICK ONE UNIQUE CONSTRAINT FOR LINKING
@@ -283,8 +294,7 @@ class MySqlSnowflakeExtractor(object):
                 data_type
             FROM
                 information_schema.columns
-        """,
-            param=self.settings.database,
+            """
         )
 
         reference_only_tables = [
@@ -416,19 +426,24 @@ class MySqlSnowflakeExtractor(object):
                 return
             curr_join_list = copy(nested_path_to_join[nested_path[0]])
 
+            ###############################################################################
             # INNER OBJECTS
+            ###############################################################################
             referenced_tables = list(
-                jx.groupby(
-                    jx.filter(
-                        relations,
-                        {
-                            "eq": {
-                                "table.name": position.name,
-                                "table.schema": position.schema,
-                            }
-                        },
+                sort_using_key(
+                    jx.groupby(
+                        jx.filter(
+                            relations,
+                            {
+                                "eq": {
+                                    "table.name": position.name,
+                                    "table.schema": position.schema,
+                                }
+                            },
+                        ),
+                        "constraint.name",
                     ),
-                    "constraint.name",
+                    key=lambda p: first(p[1]).column.name,
                 )
             )
             for g, constraint_columns in referenced_tables:
@@ -460,7 +475,6 @@ class MySqlSnowflakeExtractor(object):
                     }
                 )
 
-                # referenced_table_path = join_field(split_field(path) + ["/".join(constraint_columns.referenced.table.name)])
                 # HANDLE THE COMMON *id SUFFIX
                 name = []
                 for cname, tname in zip(
@@ -489,9 +503,6 @@ class MySqlSnowflakeExtractor(object):
                 col_pointer_name = relative_field(
                     referenced_column_path, nested_path[0]
                 )
-                # insert into nested1 VALUES (100, 10, 'aaa', -1);
-                # id.about.time.nested1 .ref=10
-                # id.about.time.nested1 .ref.name
                 for col in columns:
                     if (
                         col.table.name == constraint_columns[0].referenced.table.name
@@ -591,21 +602,32 @@ class MySqlSnowflakeExtractor(object):
                         no_nested_docs=no_nested_docs,
                     )
                 )
-
+            ###############################################################################
             # NESTED OBJECTS
+            ###############################################################################
             if not no_nested_docs:
-                for g, constraint_columns in jx.groupby(
-                    jx.filter(
-                        relations,
-                        {
-                            "eq": {
-                                "referenced.table.name": position.name,
-                                "referenced.table.schema": position.schema,
-                            }
-                        },
-                    ),
-                    "constraint.name",
-                ):
+                nesting_tables = list(
+                    sort_using_key(
+                        jx.groupby(
+                            jx.filter(
+                                relations,
+                                {
+                                    "eq": {
+                                        "referenced.table.name": position.name,
+                                        "referenced.table.schema": position.schema,
+                                    }
+                                },
+                            ),
+                            "constraint.name",
+                        ),
+                        key=lambda p: [
+                            (r.table.name, r.column.name)
+                            for r in [first(p[1])]
+                        ][0],
+                    )
+                )
+
+                for g, constraint_columns in nesting_tables:
                     g = unwrap(g)
                     constraint_columns = deepcopy(constraint_columns)
                     if g["constraint.name"] in done_relations:
@@ -633,9 +655,6 @@ class MySqlSnowflakeExtractor(object):
                             "{{path}} already exists, try adding entry to name_relations",
                             path=referenced_column_path,
                         )
-                    # if new_path not in self.settings.include:
-                    #     Log.note("Exclude nested path {{path}}", path=new_path)
-                    #     continue
                     one_to_many_joins = nested_path_to_join[
                         referenced_column_path
                     ] = copy(curr_join_list)
@@ -656,7 +675,6 @@ class MySqlSnowflakeExtractor(object):
                             },
                         )
                     )
-                    # insert into nested1 VALUES (100, 10, 'aaa', -1); # id.about.time.nested1 .ref=10# id.about.time.nested1 .ref.name
                     for col in columns:
                         if (
                             col.table.name == constraint_columns[0].table.name
@@ -834,16 +852,14 @@ class MySqlSnowflakeExtractor(object):
             # ONLY SELECT WHAT WE NEED, NULL THE REST
             selects = []
             not_null_column_seen = False
-            for ci, c in enumerate(self.columns):
-                if c.column_alias[1:] != text(ci):
-                    Log.error("expecting consistency")
-                if c.nested_path[0] == nested_path[0]:
+            for c in self.columns:
+                if (c.column.table.name, c.column.column.name,) in self.settings.exclude_columns:
+                    selects.append(sql_alias(SQL_NULL, c.column_alias))
+                elif c.nested_path[0] == nested_path[0]:
                     s = sql_alias(
                         quote_column(c.table_alias, c.column.column.name),
                         c.column_alias,
                     )
-                    if s == None:
-                        Log.error("bug")
                     selects.append(s)
                     not_null_column_seen = True
                 elif startswith_field(nested_path[0], c.path):
@@ -873,62 +889,65 @@ class MySqlSnowflakeExtractor(object):
         the first document in the batch
         the first document of the next batch
         """
-        null_values = set(self.settings.snowflake.null_values) | {None}
+        null_values = set(self.settings.null_values) | {None}
 
-        count = 0
+        doc_count = 0
 
         columns = tuple(wrap(c) for c in self.columns)
         with Timer("Downloading from MySQL"):
-            curr_record = Null
-            rownum = 0
+            curr_doc = Null
+            row_count = 0
             for row in cursor:
-                rownum += 1
+                row_count += 1
                 if please_stop:
                     Log.error("Got `please_stop` signal")
 
                 nested_path = []
-                next_record = None
+                next_object = Data()
 
                 for c, value in zip(columns, row):
+                    # columns ARE IN ORDER, FROM FACT ['.'] TO EVER-DEEPER-NESTED
                     if value in null_values:
+                        # EVERY COLUMN THAT'S NOT NEEDED IS None
                         continue
                     if len(nested_path) < len(c.nested_path):
+                        # EACH COLUMN IS DEEPER THAN THE NEXT
+                        # THESE WILL BE THE id COLUMNS, WHICH ARE ALWAYS INCLUDED AND BEFORE ALL OTHER VALUES
                         nested_path = unwrap(c.nested_path)
-                        next_record = Data()
-                    next_record[c.put] = value
+                        next_object = Data()
+                    next_object[c.put] = value
 
+                # OBJECT HAS BEEN CONSTRUCTED, LET'S PLACE IT WHERE IT BELONGS
                 if len(nested_path) > 1:
-                    path = nested_path[-2]
-                    children = curr_record[path]
-                    if children == None:
-                        children = curr_record[path] = wrap([])
-                    if len(nested_path) > 2:
+                    children = [curr_doc]
+                    steps = list(reversed(nested_path))
+                    parent_path = steps[0]
+                    for path in steps[1:]:
+                        parent = children[-1]
+                        relative_path = relative_field(path, parent_path)
+                        children = unwrap(parent[relative_path])
+                        if not children:
+                            children = parent[relative_path] = []
                         parent_path = path
-                        for path in list(reversed(nested_path[0:-2:])):
-                            parent = children.last()
-                            relative_path = relative_field(path, parent_path)
-                            children = parent[relative_path]
-                            if children == None:
-                                children = parent[relative_path] = wrap([])
-                            parent_path = path
 
-                    children.append(next_record)
+                    children.append(next_object)
                     continue
 
-                if curr_record == next_record:
-                    Log.error("not expected")
+                # THE TOP-LEVEL next_object HAS BEEN ENCOUNTERED, EMIT THE PREVIOUS, AND COMPLETED curr_doc
+                if curr_doc == next_object:
+                    Log.error("Expecting records. Did you select the wrong schema, or select records that do not exist?")
 
-                if curr_record:
-                    append(curr_record["id"])
-                    count += 1
-                curr_record = next_record
+                if curr_doc:
+                    append(curr_doc["id"])
+                    doc_count += 1
+                curr_doc = next_object
 
             # DEAL WITH LAST RECORD
-            if curr_record:
-                append(curr_record["id"])
-                count += 1
+            if curr_doc:
+                append(curr_doc["id"])
+                doc_count += 1
 
-        Log.note("{{num}} documents ({{rownum}} db records)", num=count, rownum=rownum)
+        Log.note("{{doc_count}} documents ({{row_count}} db records)", doc_count=doc_count, row_count=row_count)
 
 
 def full_name_string(column):

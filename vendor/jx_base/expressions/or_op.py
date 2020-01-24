@@ -5,7 +5,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http:# mozilla.org/MPL/2.0/.
 #
-# Author: Kyle Lahnakoski (kyle@lahnakoski.com)
+# Contact: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 
 """
@@ -75,7 +75,7 @@ class OrOp(Expression):
             elif simple is FALSE:
                 pass
             elif is_op(simple, OrOp):
-                terms.extend(tt for tt in simple.terms if tt not in terms)
+                terms.extend([tt for tt in simple.terms if tt not in terms])
             elif is_op(simple, AndOp):
                 ands.append(simple)
             elif simple not in terms:

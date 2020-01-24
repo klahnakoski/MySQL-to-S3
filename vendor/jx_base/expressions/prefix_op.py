@@ -5,7 +5,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http:# mozilla.org/MPL/2.0/.
 #
-# Author: Kyle Lahnakoski (kyle@lahnakoski.com)
+# Contact: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 
 """
@@ -81,3 +81,8 @@ class PrefixOp(Expression):
                 ]
             )
         ].partial_eval()
+
+    def __eq__(self, other):
+        if not is_op(other, PrefixOp):
+            return False
+        return self.expr == other.expr and self.prefix == other.prefix

@@ -5,7 +5,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 #
-# Author: Kyle Lahnakoski (kyle@lahnakoski.com)
+# Contact: Kyle Lahnakoski (kyle@lahnakoski.com)
 #
 
 from __future__ import absolute_import, division, unicode_literals
@@ -587,7 +587,7 @@ def deformat(value):
 
     FOR SOME REASON translate CAN NOT BE CALLED:
         ERROR: translate() takes exactly one argument (2 given)
-        File "C:\Python27\lib\string.py", line 493, in translate
+        File "C:\\Python27\\lib\\string.py", line 493, in translate
     """
     output = []
     for c in value:

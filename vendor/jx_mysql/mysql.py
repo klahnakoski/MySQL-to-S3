@@ -5,30 +5,31 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 #
-# Author: Kyle Lahnakoski (kyle@lahnakoski.com)
-#
 
 from __future__ import absolute_import, division, unicode_literals
 
 import subprocess
 from datetime import datetime
+from urllib.parse import unquote
 
 from pymysql import InterfaceError, connect, cursors
 
-import mo_json
+from mo_json import TIME, scrub, INTEGER, STRING, NUMBER, INTERVAL
 from jx_python import jx
 from mo_dots import coalesce, is_data, listwrap, unwrap, wrap, Data
 from mo_files import File
-from mo_future import is_binary, is_text, text, transpose, utf8_json_encoder
+from mo_future import is_binary, is_text, text, transpose, utf8_json_encoder, first
 from mo_kwargs import override
-from mo_logs import Log, Except, suppress_exception
+from mo_logs import Log, Except, suppress_exception, strings
 from mo_logs.strings import expand_template, indent, outdent
 from mo_math import is_number
-from mo_times import Date
-from pyLibrary.env import http
-from pyLibrary.sql import SQL, SQL_AND, SQL_ASC, SQL_DESC, SQL_FROM, SQL_IS_NULL, SQL_LEFT_JOIN, SQL_LIMIT, SQL_NULL, \
+from mo_sql import SQL, SQL_AND, SQL_ASC, SQL_DESC, SQL_FROM, SQL_IS_NULL, SQL_LEFT_JOIN, SQL_LIMIT, SQL_NULL, \
     SQL_ONE, SQL_SELECT, SQL_TRUE, SQL_WHERE, sql_iso, sql_list, SQL_INSERT, SQL_VALUES, ConcatSQL, SQL_EQ, \
-    SQL_UPDATE, SQL_SET, JoinSQL, SQL_DOT, SQL_AS
+    SQL_UPDATE, SQL_SET, JoinSQL, SQL_DOT, SQL_AS, SQL_COMMA, SQL_STAR, SQL_ORDERBY, SQL_OR, SQL_NOT, SQL_IS_NOT_NULL, \
+    SQL_GT
+from mo_times import Date
+from pyLibrary import convert
+from pyLibrary.env import http
 
 DEBUG = False
 MAX_BATCH_SIZE = 1
@@ -46,9 +47,9 @@ class MySQL(object):
     @override
     def __init__(
         self,
-        host,
-        username,
-        password,
+        host,  # CAN ALSO BE SET TO mysql://username:password@host:optional_port/database_name
+        username=None,
+        password=None,
         port=3306,
         debug=False,
         schema=None,
@@ -86,6 +87,22 @@ class MySQL(object):
 
     def _open(self):
         """ DO NOT USE THIS UNLESS YOU close() FIRST"""
+        if self.settings.host.startswith("mysql://"):
+            # DECODE THE URI: mysql://username:password@host:optional_port/database_name
+            up = strings.between(self.settings.host, "mysql://", "@")
+            if ":" in up:
+                self.settings.username, self.settings.password = unquote(up).split(":")
+            else:
+                self.settings.username = up
+
+            url = strings.between(self.settings.host, "@", None)
+            hp, self.settings.schema = url.split("/", 1)
+            if ":" in hp:
+                self.settings.host, self.settings.port = hp.split(":")
+                self.settings.port = int(self.settings.port)
+            else:
+                self.settings.host = hp
+
         if self.settings.ssl.ca.startswith("https://"):
             self.pemfile_url = self.settings.ssl.ca
             self.pemfile = File("./resources/pem")/self.settings.host
@@ -267,6 +284,8 @@ class MySQL(object):
         self._execute_backlog()
 
         try:
+            if isinstance(sql, SQL):
+                sql = text(sql)
             if param:
                 sql = expand_template(sql, quote_param(param))
             sql = self.preamble + outdent(sql)
@@ -654,6 +673,41 @@ def sql_eq(**item):
     ])
 
 
+def sql_query(command):
+    """
+    VERY BASIC QUERY EXPRESSION TO SQL
+    :param command: jx-expression
+    :return: SQL
+    """
+    command = wrap(command)
+    acc = [SQL_SELECT]
+    if command.select:
+        acc.append(JoinSQL(SQL_COMMA, map(quote_column, listwrap(command.select))))
+    else:
+        acc.append(SQL_STAR)
+
+    acc.append(SQL_FROM)
+    acc.append(quote_column(command["from"]))
+    if command.where:
+        acc.append(SQL_WHERE)
+        if command.where.eq:
+            acc.append(sql_eq(**command.where.eq))
+        else:
+            where = esfilter2sqlwhere(command.where)
+            acc.append(where)
+
+    sort = coalesce(command.orderby, command.sort)
+    if sort:
+        acc.append(SQL_ORDERBY)
+        acc.append(JoinSQL(SQL_COMMA, map(quote_column, listwrap(sort))))
+
+    if command.limit:
+        acc.append(SQL_LIMIT)
+        acc.append(JoinSQL(SQL_COMMA, map(quote_value, listwrap(command.limit))))
+
+    return ConcatSQL(acc)
+
+
 def utf8_to_unicode(v):
     try:
         if is_binary(v):
@@ -765,30 +819,138 @@ def json_encode(value):
     FOR PUTTING JSON INTO DATABASE (sort_keys=True)
     dicts CAN BE USED AS KEYS
     """
-    return text(utf8_json_encoder(mo_json.scrub(value)))
+    return text(utf8_json_encoder(scrub(value)))
+
+
+def esfilter2sqlwhere(esfilter):
+    return _esfilter2sqlwhere(esfilter)
+
+
+def _esfilter2sqlwhere(esfilter):
+    """
+    CONVERT ElassticSearch FILTER TO SQL FILTER
+    db - REQUIRED TO PROPERLY QUOTE VALUES AND COLUMN NAMES
+    """
+    esfilter = wrap(esfilter)
+
+    if esfilter is True:
+        return SQL_TRUE
+    elif esfilter["and"]:
+        return sql_iso(SQL_AND.join([esfilter2sqlwhere(a) for a in esfilter["and"]]))
+    elif esfilter["or"]:
+        return sql_iso(SQL_OR.join([esfilter2sqlwhere(a) for a in esfilter["or"]]))
+    elif esfilter["not"]:
+        return SQL_NOT + sql_iso(esfilter2sqlwhere(esfilter["not"]))
+    elif esfilter.term:
+        return sql_iso(SQL_AND.join([
+            quote_column(col) + SQL("=") + quote_value(val)
+            for col, val in esfilter.term.items()
+        ]))
+    elif esfilter.eq:
+        col, val = first(esfilter.eq.items())
+        return ConcatSQL((
+            quote_column(col) , SQL_EQ , quote_value(val)
+        ))
+    elif esfilter.terms:
+        for col, v in esfilter.terms.items():
+            if len(v) == 0:
+                return "FALSE"
+
+            try:
+                int_list = convert.value2intlist(v)
+                has_null = any(vv == None for vv in v)
+                if int_list:
+                    filter = int_list_packer(col, int_list)
+                    if has_null:
+                        return esfilter2sqlwhere({"or": [{"missing": col}, filter]})
+                    elif 'terms' in filter and set(filter['terms'].get(col, [])) == set(int_list):
+                        return quote_column(col) + " in " + quote_list(int_list)
+                    else:
+                        return esfilter2sqlwhere(filter)
+                else:
+                    if has_null:
+                        return esfilter2sqlwhere({"missing": col})
+                    else:
+                        return "false"
+            except Exception as e:
+                e = Except.wrap(e)
+                pass
+            return quote_column(col) + " in " + quote_list(v)
+    elif esfilter.script:
+        return sql_iso(esfilter.script)
+    elif esfilter.gt:
+        k, v = first(esfilter.gt.items())
+        return ConcatSQL((
+            quote_column(k),
+            SQL_GT,
+            quote_value(v)
+        ))
+    elif esfilter.range:
+        name2sign = {
+            "gt": SQL(">"),
+            "gte": SQL(">="),
+            "lte": SQL("<="),
+            "lt": SQL("<")
+        }
+
+        def single(col, r):
+            min = coalesce(r["gte"], r[">="])
+            max = coalesce(r["lte"], r["<="])
+            if min != None and max != None:
+                # SPECIAL CASE (BETWEEN)
+                sql = quote_column(col) + SQL(" BETWEEN ") + quote_value(min) + SQL_AND + quote_value(max)
+            else:
+                sql = SQL_AND.join(
+                    quote_column(col) + name2sign[sign] + quote_value(value)
+                    for sign, value in r.items()
+                )
+            return sql
+
+        terms = [single(col, ranges) for col, ranges in esfilter.range.items()]
+        if len(terms) == 1:
+            output = terms[0]
+        else:
+            output = sql_iso(SQL_AND.join(terms))
+        return output
+    elif esfilter.missing:
+        if isinstance(esfilter.missing, text):
+            return sql_iso(quote_column(esfilter.missing) + SQL_IS_NULL)
+        else:
+            return sql_iso(quote_column(esfilter.missing.field) + SQL_IS_NULL)
+    elif esfilter.exists:
+        if isinstance(esfilter.exists, text):
+            return sql_iso(quote_column(esfilter.exists) + SQL_IS_NOT_NULL)
+        else:
+            return sql_iso(quote_column(esfilter.exists.field) + SQL_IS_NOT_NULL)
+    elif esfilter.match_all:
+        return SQL_TRUE
+    elif esfilter.instr:
+        return sql_iso(SQL_AND.join(["instr" + sql_iso(quote_column(col) + ", " + quote_value(val)) + ">0" for col, val in esfilter.instr.items()]))
+    else:
+        Log.error("Can not convert esfilter to SQL: {{esfilter}}", esfilter=esfilter)
 
 
 mysql_type_to_json_type = {
-    "bigint": "number",
-    "blob": "string",
-    "char": "string",
-    "datetime": "number",
-    "decimal": "number",
-    "double": "number",
-    "enum": "number",
-    "float": "number",
-    "int": "number",
-    "longblob": "string",
-    "longtext": "string",
-    "mediumblob": "string",
-    "mediumint": "number",
-    "mediumtext": "string",
+    "bigint": INTEGER,
+    "blob": STRING,
+    "char": STRING,
+    "datetime": TIME,
+    "decimal": NUMBER,
+    "double": NUMBER,
+    "enum": INTEGER,
+    "float": NUMBER,
+    "int": INTEGER,
+    "longblob": STRING,
+    "longtext": STRING,
+    "mediumblob": STRING,
+    "mediumint": INTEGER,
+    "mediumtext": STRING,
     "set": "array",
-    "smallint": "number",
-    "text": "string",
-    "time": "number",
-    "timestamp": "number",
-    "tinyint": "number",
-    "tinytext": "number",
-    "varchar": "string"
+    "smallint": INTEGER,
+    "text": STRING,
+    "time": INTERVAL,
+    "timestamp": TIME,
+    "tinyint": INTEGER,
+    "tinytext": STRING,
+    "varchar": STRING
 }
