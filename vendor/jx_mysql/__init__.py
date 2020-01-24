@@ -29,6 +29,8 @@ from mo_sql import SQL, SQL_ORDERBY, SQL_LIMIT, sql_list, SQL_WHERE
 class MySQL(object):
     """
     jx to MySQL DATABASE QUERIES
+
+    NEW CODE SHOULD NOT USE THIS: SUBSUMED BY THE REST OF THE LIBRARY
     """
 
     @override
@@ -331,7 +333,6 @@ class MySQL(object):
         if where == None:
             return ""
         return SQL_WHERE + _esfilter2sqlwhere(self.db, where)
-
 
 
 def expand_json(rows):

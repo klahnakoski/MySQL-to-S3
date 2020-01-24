@@ -15,6 +15,9 @@ from __future__ import unicode_literals
 from contextlib import closing
 
 from jx_elasticsearch import elasticsearch
+from jx_mysql import MySQL, quote_column, quote_value
+from jx_mysql.mysql import sql_call
+from jx_mysql.mysql_snowflake_extractor import MySqlSnowflakeExtractor
 from mo_dots import Null, listwrap, coalesce
 from mo_dots.lists import last
 from mo_files import File, TempFile
@@ -25,12 +28,11 @@ from mo_threads import Signal, Thread, Queue, THREAD_STOP
 from mo_times import Date, Duration
 from mo_times.timer import Timer
 from mysql_to_s3.counter import Counter, DurationCounter, BatchCounter
-from pyLibrary.sql.mysql_snowflake_extractor import MySqlSnowflakeExtractor
 from mysql_to_s3.utils import check_database
 from pyLibrary import convert, aws
 from pyLibrary.aws import s3
 from pyLibrary.env.git import get_revision
-from pyLibrary.sql import (
+from mo_sql import (
     SQL,
     sql_list,
     SQL_LIMIT,
@@ -50,8 +52,6 @@ from pyLibrary.sql import (
     SQL_LT,
     SQL_IN,
 )
-from pyLibrary.sql.mysql import MySQL, quote_column, quote_value
-from pyLibrary.sql.sqlite import sql_call
 
 DEBUG = True
 

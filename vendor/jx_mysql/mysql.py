@@ -657,6 +657,13 @@ def quote_list(values):
     return sql_iso(sql_list(map(quote_value, values)))
 
 
+def sql_call(func_name, parameters):
+    return ConcatSQL((
+        SQL(func_name),
+        sql_iso(JoinSQL(SQL_COMMA, parameters))
+    ))
+
+
 def sql_eq(**item):
     """
     RETURN SQL FOR COMPARING VARIABLES TO VALUES (AND'ED TOGETHER)
